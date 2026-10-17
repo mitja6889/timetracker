@@ -147,6 +147,30 @@ func dayWorkSeconds(dayKey string, intervals [][2]time.Time, pauses []DayPause, 
 	return total, nil
 }
 
+func (s *Server) fetchUserTimeEvents(ctx context.Context, userID primitive.ObjectID) ([]TimeEventRecord, error) {
+	cur, err := s.timeEvents.Find(ctx, bson.M{"userId": userID}, options.Find().SetSort(bson.D{
+		{Key: "at", Value: 1},
+		{Key: "_id", Value: 1},
+	}))
+	if err != nil {
+		return nil, err
+	}
+	var events []TimeEventRecord
+	if err := cur.All(ctx, &events); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func (s *Server) validateNewTimeEvent(ctx context.Context, userID primitive.ObjectID, rec TimeEventRecord) error {
+	existing, err := s.fetchUserTimeEvents(ctx, userID)
+	if err != nil {
+		return err
+	}
+	trial := append(existing, rec)
+	return validateUserTimeEvents(trial)
+}
+
 func (s *Server) timerRunning(ctx context.Context, userID primitive.ObjectID) (bool, *TimeEventRecord, error) {
 	var last TimeEventRecord
 	err := s.timeEvents.FindOne(ctx, bson.M{"userId": userID}, options.FindOne().SetSort(bson.D{{Key: "at", Value: -1}, {Key: "_id", Value: -1}})).Decode(&last)
@@ -205,6 +229,10 @@ func (s *Server) handleTimerStart(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	rec := TimeEventRecord{UserID: a.User.ID, Type: EventStart, At: now}
+	if err := s.validateNewTimeEvent(r.Context(), a.User.ID, rec); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	res, err := s.timeEvents.InsertOne(r.Context(), rec)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "napaka baze")
@@ -236,6 +264,10 @@ func (s *Server) handleTimerStop(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	rec := TimeEventRecord{UserID: a.User.ID, Type: EventStop, At: now}
+	if err := s.validateNewTimeEvent(r.Context(), a.User.ID, rec); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	res, err := s.timeEvents.InsertOne(r.Context(), rec)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "napaka baze")
@@ -530,6 +562,10 @@ func (s *Server) handleCreateTimeEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec := TimeEventRecord{UserID: target, Type: req.Type, At: at}
+	if err := s.validateNewTimeEvent(r.Context(), target, rec); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	res, err := s.timeEvents.InsertOne(r.Context(), rec)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "napaka baze")

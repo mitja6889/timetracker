@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -13,6 +14,32 @@ const (
 type TimeEvent struct {
 	Type string    `bson:"type" json:"type"`
 	At   time.Time `bson:"at" json:"at"`
+}
+
+// validateUserTimeEvents preveri, da se start/stop izmenjujeta (po času).
+func validateUserTimeEvents(events []TimeEventRecord) error {
+	if len(events) == 0 {
+		return nil
+	}
+	sorted := append([]TimeEventRecord(nil), events...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].At.Equal(sorted[j].At) {
+			return sorted[i].ID.Hex() < sorted[j].ID.Hex()
+		}
+		return sorted[i].At.Before(sorted[j].At)
+	})
+	if sorted[0].Type != EventStart {
+		return fmt.Errorf("prvi dogodek mora biti start")
+	}
+	for i := 1; i < len(sorted); i++ {
+		if sorted[i].Type == sorted[i-1].Type {
+			if sorted[i].Type == EventStart {
+				return fmt.Errorf("dva zaporedna start dogodka nista dovoljena")
+			}
+			return fmt.Errorf("dva zaporedna stop dogodka nista dovoljena")
+		}
+	}
+	return nil
 }
 
 func WorkSecondsFromEvents(events []TimeEvent, now time.Time) int64 {

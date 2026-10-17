@@ -464,6 +464,115 @@ func (s *Server) handleCreateDayPause(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]string{"id": res.InsertedID.(primitive.ObjectID).Hex()})
 }
 
+func (s *Server) resolveManualTimeUser(a *Auth, userIDHex string) (primitive.ObjectID, int, string) {
+	target := a.User.ID
+	if userIDHex != "" {
+		id, err := primitive.ObjectIDFromHex(userIDHex)
+		if err != nil {
+			return target, http.StatusBadRequest, "neveljaven userId"
+		}
+		if id != a.User.ID {
+			if !a.Has(PermEditAll) {
+				return target, http.StatusForbidden, "nimate pravice za dogodke drugih uporabnikov"
+			}
+			if n, err := s.users.CountDocuments(context.Background(), bson.M{"_id": id}); err != nil || n == 0 {
+				return target, http.StatusBadRequest, "uporabnik ne obstaja"
+			}
+		}
+		target = id
+	}
+	if target != a.User.ID && !a.Has(PermEditAll) {
+		return target, http.StatusForbidden, "nimate pravice"
+	}
+	if target == a.User.ID && !a.Has(PermTimerUse) && !a.Has(PermEditOwn) && !a.Has(PermEditAll) {
+		return target, http.StatusForbidden, "nimate pravice za ročne dogodke"
+	}
+	return target, 0, ""
+}
+
+// POST /api/time/events — ročni dogodek start/stop
+func (s *Server) handleCreateTimeEvent(w http.ResponseWriter, r *http.Request) {
+	a := authFrom(r)
+	var req struct {
+		UserID string `json:"userId"`
+		Type   string `json:"type"`
+		Date   string `json:"date"`
+		Time   string `json:"time"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	target, status, msg := s.resolveManualTimeUser(a, strings.TrimSpace(req.UserID))
+	if status != 0 {
+		writeErr(w, status, msg)
+		return
+	}
+	switch req.Type {
+	case EventStart, EventStop:
+	default:
+		writeErr(w, http.StatusBadRequest, "tip mora biti start ali stop")
+		return
+	}
+	date := strings.TrimSpace(req.Date)
+	timePart := strings.TrimSpace(req.Time)
+	if date == "" || timePart == "" {
+		writeErr(w, http.StatusBadRequest, "datum in čas sta obvezna")
+		return
+	}
+	at, err := time.ParseInLocation("2006-01-02T15:04", date+"T"+timePart, appLoc)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "neveljaven datum ali čas")
+		return
+	}
+	at = at.UTC()
+	if at.After(time.Now().UTC().Add(time.Minute)) {
+		writeErr(w, http.StatusBadRequest, "dogodek ne sme biti v prihodnosti")
+		return
+	}
+	rec := TimeEventRecord{UserID: target, Type: req.Type, At: at}
+	res, err := s.timeEvents.InsertOne(r.Context(), rec)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":   res.InsertedID.(primitive.ObjectID).Hex(),
+		"type": rec.Type,
+		"at":   rec.At,
+	})
+}
+
+// DELETE /api/time/events/{id}
+func (s *Server) handleDeleteTimeEvent(w http.ResponseWriter, r *http.Request) {
+	a := authFrom(r)
+	id, ok := parseID(w, r)
+	if !ok {
+		return
+	}
+	var ev TimeEventRecord
+	if err := s.timeEvents.FindOne(r.Context(), bson.M{"_id": id}).Decode(&ev); err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			writeErr(w, http.StatusNotFound, "dogodek ni najden")
+		} else {
+			writeErr(w, http.StatusInternalServerError, "napaka baze")
+		}
+		return
+	}
+	if ev.UserID != a.User.ID && !a.Has(PermEditAll) {
+		writeErr(w, http.StatusForbidden, "nimate pravice")
+		return
+	}
+	if ev.UserID == a.User.ID && !a.Has(PermTimerUse) && !a.Has(PermEditOwn) && !a.Has(PermEditAll) {
+		writeErr(w, http.StatusForbidden, "nimate pravice")
+		return
+	}
+	if _, err := s.timeEvents.DeleteOne(r.Context(), bson.M{"_id": id}); err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // DELETE /api/time/pauses/{id}
 func (s *Server) handleDeleteDayPause(w http.ResponseWriter, r *http.Request) {
 	a := authFrom(r)

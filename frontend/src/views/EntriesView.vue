@@ -2,12 +2,17 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, type TimeDay, type UserRow } from '../api'
 import DayPauseModal from '../components/DayPauseModal.vue'
+import ManualEventModal from '../components/ManualEventModal.vue'
 import { useAuth } from '../stores/auth'
 import { formatDateTime, formatDayGroupLabel, formatDuration, eventTypeLabel } from '../utils'
 
 const auth = useAuth()
 const canViewAll = computed(() => auth.has('entries.view_all'))
 const canAddPause = computed(() => auth.has('timer.use') || auth.has('entries.edit_own'))
+const canAddEvent = computed(
+  () => auth.has('timer.use') || auth.has('entries.edit_own') || auth.has('entries.edit_all'),
+)
+const canDeleteEvent = canAddEvent
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 const todayLocal = () => {
@@ -30,6 +35,8 @@ const error = ref('')
 
 const expandedDays = ref<Set<string>>(new Set())
 const pauseDayKey = ref<string | null>(null)
+const showEventModal = ref(false)
+const eventDefaultDate = ref<string | undefined>(undefined)
 
 const todayKey = computed(() => todayLocal())
 
@@ -73,6 +80,21 @@ function openPause(dayKey: string, ev: Event) {
   pauseDayKey.value = dayKey
 }
 
+function openEventModal(dayKey?: string) {
+  eventDefaultDate.value = dayKey
+  showEventModal.value = true
+}
+
+async function removeEvent(id: string) {
+  if (!window.confirm('Izbrišem dogodek?')) return
+  try {
+    await api.deleteTimeEvent(id)
+    await load()
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : 'Brisanje ni uspelo'
+  }
+}
+
 async function removePause(id: string) {
   if (!window.confirm('Izbrišem pavzo?')) return
   try {
@@ -84,7 +106,7 @@ async function removePause(id: string) {
 }
 
 onMounted(async () => {
-  if (canViewAll.value) {
+  if (canViewAll.value || auth.has('entries.edit_all')) {
     try {
       users.value = await api.users()
     } catch {
@@ -97,7 +119,10 @@ onMounted(async () => {
 
 <template>
   <div class="card entries-page">
-    <h2>Beleženje po dnevih</h2>
+    <div class="row between wrap page-head">
+      <h2>Beleženje po dnevih</h2>
+      <button v-if="canAddEvent" type="button" class="btn primary" @click="openEventModal()">+ Dogodek</button>
+    </div>
 
     <section class="range-bar range-bar-compact" aria-label="Obdobje">
       <div class="range-bar-fields">
@@ -153,23 +178,43 @@ onMounted(async () => {
             </span>
             <span class="entry-row-duration">{{ formatDuration(day.workSeconds) }}</span>
           </button>
-          <button
-            v-if="canAddPause"
-            type="button"
-            class="btn ghost day-pause-btn"
-            @click="openPause(day.dayKey, $event)"
-          >
-            Pavza
-          </button>
+          <div class="day-row-actions">
+            <button
+              v-if="canAddEvent"
+              type="button"
+              class="btn ghost day-pause-btn"
+              @click.stop="openEventModal(day.dayKey)"
+            >
+              + Dogodek
+            </button>
+            <button
+              v-if="canAddPause"
+              type="button"
+              class="btn ghost day-pause-btn"
+              @click="openPause(day.dayKey, $event)"
+            >
+              Pavza
+            </button>
+          </div>
         </div>
 
         <div v-show="isDayExpanded(day.dayKey)" class="entry-day-children">
           <div class="day-detail-block">
             <h4 class="day-detail-title">Dogodki</h4>
             <ul v-if="day.events.length" class="event-list">
-              <li v-for="ev in day.events" :key="ev.id">
-                <strong>{{ eventTypeLabel(ev.type) }}</strong>
-                {{ formatDateTime(ev.at) }}
+              <li v-for="ev in day.events" :key="ev.id" class="event-list-row">
+                <span>
+                  <strong>{{ eventTypeLabel(ev.type) }}</strong>
+                  {{ formatDateTime(ev.at) }}
+                </span>
+                <button
+                  v-if="canDeleteEvent"
+                  type="button"
+                  class="btn ghost danger-text btn-xs"
+                  @click="removeEvent(ev.id)"
+                >
+                  ✕
+                </button>
               </li>
             </ul>
             <p v-else class="muted small">Brez dogodkov.</p>
@@ -190,5 +235,12 @@ onMounted(async () => {
     </div>
 
     <DayPauseModal v-if="pauseDayKey" :day-key="pauseDayKey" @close="pauseDayKey = null" @saved="pauseDayKey = null; load()" />
+    <ManualEventModal
+      v-if="showEventModal"
+      :users="users"
+      :default-date="eventDefaultDate"
+      @close="showEventModal = false"
+      @saved="showEventModal = false; load()"
+    />
   </div>
 </template>

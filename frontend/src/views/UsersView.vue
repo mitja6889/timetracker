@@ -2,10 +2,12 @@
 import { onMounted, reactive, ref } from 'vue'
 import { api, ApiError, type Role, type UserRow } from '../api'
 import AppModal from '../components/AppModal.vue'
+import { useConfirm } from '../stores/confirm'
 import { useAuth } from '../stores/auth'
 import { formatDateTime } from '../utils'
 
 const auth = useAuth()
+const confirm = useConfirm()
 
 const users = ref<UserRow[]>([])
 const roles = ref<Role[]>([])
@@ -78,7 +80,14 @@ async function save() {
 }
 
 async function remove(u: UserRow) {
-  if (!window.confirm(`Izbrišem uporabnika "${u.username}" in vse njegove vnose časa?`)) return
+  if (
+    !(await confirm({
+      message: `Izbrišem uporabnika "${u.username}" in vse njegove vnose časa?`,
+      variant: 'danger',
+      confirmLabel: 'Izbriši',
+    }))
+  )
+    return
   try {
     await api.deleteUser(u.id)
     await load()

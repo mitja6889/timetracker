@@ -2,9 +2,11 @@
 import { onMounted, reactive, ref } from 'vue'
 import { api, ApiError, type PermissionInfo, type Role } from '../api'
 import AppModal from '../components/AppModal.vue'
+import { useConfirm } from '../stores/confirm'
 import { useAuth } from '../stores/auth'
 
 const auth = useAuth()
+const confirm = useConfirm()
 
 const roles = ref<Role[]>([])
 const permissions = ref<PermissionInfo[]>([])
@@ -63,7 +65,14 @@ async function save() {
 }
 
 async function remove(r: Role) {
-  if (!window.confirm(`Izbrišem rolo "${r.name}"?`)) return
+  if (
+    !(await confirm({
+      message: `Izbrišem rolo "${r.name}"?`,
+      variant: 'danger',
+      confirmLabel: 'Izbriši',
+    }))
+  )
+    return
   try {
     await api.deleteRole(r.id)
     await load()

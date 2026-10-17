@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import ConfirmHost from './components/ConfirmHost.vue'
 import { useAuth } from './stores/auth'
 
 const auth = useAuth()
@@ -52,4 +53,5 @@ function logout() {
     </nav>
   </div>
   <RouterView v-else />
+  <ConfirmHost />
 </template>

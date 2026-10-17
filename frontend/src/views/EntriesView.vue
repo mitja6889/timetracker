@@ -3,10 +3,12 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, type TimeDay, type UserRow } from '../api'
 import DayPauseModal from '../components/DayPauseModal.vue'
 import ManualEventModal from '../components/ManualEventModal.vue'
+import { useConfirm } from '../stores/confirm'
 import { useAuth } from '../stores/auth'
 import { formatDateTime, formatDayGroupLabel, formatDuration, eventTypeLabel } from '../utils'
 
 const auth = useAuth()
+const confirm = useConfirm()
 const canViewAll = computed(() => auth.has('entries.view_all'))
 const canAddPause = computed(() => auth.has('timer.use') || auth.has('entries.edit_own'))
 const canAddEvent = computed(
@@ -86,7 +88,7 @@ function openEventModal(dayKey?: string) {
 }
 
 async function removeEvent(id: string) {
-  if (!window.confirm('Izbrišem dogodek?')) return
+  if (!(await confirm({ message: 'Izbrišem dogodek?', variant: 'danger', confirmLabel: 'Izbriši' }))) return
   try {
     await api.deleteTimeEvent(id)
     await load()
@@ -96,7 +98,7 @@ async function removeEvent(id: string) {
 }
 
 async function removePause(id: string) {
-  if (!window.confirm('Izbrišem pavzo?')) return
+  if (!(await confirm({ message: 'Izbrišem pavzo?', variant: 'danger', confirmLabel: 'Izbriši' }))) return
   try {
     await api.deleteDayPause(id)
     await load()

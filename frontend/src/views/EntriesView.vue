@@ -9,8 +9,10 @@ import {
   formatDayGroupLabel,
   formatDuration,
   formatTime,
+  eventTypeLabel,
   localDayKey,
   nextDayStartISO,
+  pauseCount,
 } from '../utils'
 
 const auth = useAuth()
@@ -375,13 +377,16 @@ onMounted(async () => {
                   <dt>Status</dt>
                   <dd><span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span></dd>
                   <dt>Pavze</dt>
+                  <dd>{{ pauseCount(e) }}</dd>
+                  <dt>Dogodki</dt>
                   <dd>
-                    <ul v-if="e.pauses.length" class="pause-list">
-                      <li v-for="(p, i) in e.pauses" :key="i">
-                        {{ formatDateTime(p.start) }} – {{ p.end ? formatDateTime(p.end) : '…' }}
+                    <ul v-if="e.events?.length" class="event-list">
+                      <li v-for="(ev, i) in e.events" :key="i">
+                        <strong>{{ eventTypeLabel(ev.type) }}</strong>
+                        {{ formatDateTime(ev.at) }}
                       </li>
                     </ul>
-                    <span v-else class="muted">Brez pavz</span>
+                    <span v-else class="muted">Brez dogodkov</span>
                   </dd>
                 </dl>
                 <div v-if="e.canEdit || e.canDelete" class="entry-row-actions">

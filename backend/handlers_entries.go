@@ -36,9 +36,8 @@ func canModify(a *Auth, e *Entry) bool {
 }
 
 func (s *Server) toDTO(a *Auth, e Entry, names map[primitive.ObjectID][2]string, now time.Time) entryDTO {
-	if e.Pauses == nil {
-		e.Pauses = []Pause{}
-	}
+	e.EnsureEvents()
+	e.SyncStatusFromEvents()
 	mod := canModify(a, &e)
 	n := names[e.UserID]
 	return entryDTO{
@@ -117,7 +116,7 @@ func (s *Server) handleTimerStart(w http.ResponseWriter, r *http.Request) {
 		UserID:      a.User.ID,
 		Description: desc,
 		StartedAt:   now,
-		Pauses:      []Pause{},
+		Events:      []TimeEvent{{Type: EventStart, At: now}},
 		Status:      StatusRunning,
 		Open:        true,
 		CreatedAt:   now,
@@ -136,57 +135,106 @@ func (s *Server) handleTimerStart(w http.ResponseWriter, r *http.Request) {
 	s.timerResponse(w, a, e)
 }
 
+func (s *Server) findOpenTimerEntry(ctx context.Context, userID primitive.ObjectID) (Entry, error) {
+	var e Entry
+	err := s.entries.FindOne(ctx, bson.M{
+		"userId": userID,
+		"status": bson.M{"$in": []string{StatusRunning, StatusPaused}},
+	}).Decode(&e)
+	return e, err
+}
+
+func (s *Server) persistTimerEntry(ctx context.Context, e Entry) error {
+	_, err := s.entries.UpdateOne(ctx, bson.M{"_id": e.ID}, bson.M{"$set": bson.M{
+		"events":    e.Events,
+		"status":    e.Status,
+		"open":      e.Open,
+		"endedAt":   e.EndedAt,
+		"updatedAt": e.UpdatedAt,
+		"pauses":    []Pause{},
+	}})
+	return err
+}
+
 func (s *Server) handleTimerPause(w http.ResponseWriter, r *http.Request) {
 	a := authFrom(r)
 	now := time.Now().UTC()
-	var e Entry
-	err := s.entries.FindOneAndUpdate(r.Context(),
-		bson.M{"userId": a.User.ID, "status": StatusRunning},
-		bson.M{
-			"$set":  bson.M{"status": StatusPaused, "updatedAt": now},
-			"$push": bson.M{"pauses": Pause{Start: now}},
-		},
-		options.FindOneAndUpdate().SetReturnDocument(options.After),
-	).Decode(&e)
-	s.finishTimerOp(w, a, e, err, "ni tekočega vnosa, ki bi ga lahko pavzirali")
+	e, err := s.findOpenTimerEntry(r.Context(), a.User.ID)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		writeErr(w, http.StatusConflict, "ni tekočega vnosa, ki bi ga lahko pavzirali")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	e.EnsureEvents()
+	if e.Status != StatusRunning {
+		writeErr(w, http.StatusConflict, "ni tekočega vnosa, ki bi ga lahko pavzirali")
+		return
+	}
+	e.Events = append(e.Events, TimeEvent{Type: EventStop, At: now})
+	e.Status = StatusPaused
+	e.UpdatedAt = now
+	if err := s.persistTimerEntry(r.Context(), e); err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	s.timerResponse(w, a, e)
 }
 
 func (s *Server) handleTimerResume(w http.ResponseWriter, r *http.Request) {
 	a := authFrom(r)
 	now := time.Now().UTC()
-	var e Entry
-	err := s.entries.FindOneAndUpdate(r.Context(),
-		bson.M{"userId": a.User.ID, "status": StatusPaused},
-		bson.M{"$set": bson.M{
-			"status":          StatusRunning,
-			"updatedAt":       now,
-			"pauses.$[p].end": now,
-		}},
-		options.FindOneAndUpdate().
-			SetReturnDocument(options.After).
-			SetArrayFilters(options.ArrayFilters{Filters: []any{bson.M{"p.end": bson.M{"$exists": false}}}}),
-	).Decode(&e)
-	s.finishTimerOp(w, a, e, err, "ni pavziranega vnosa, ki bi ga lahko nadaljevali")
+	e, err := s.findOpenTimerEntry(r.Context(), a.User.ID)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		writeErr(w, http.StatusConflict, "ni pavziranega vnosa, ki bi ga lahko nadaljevali")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	e.EnsureEvents()
+	if e.Status != StatusPaused {
+		writeErr(w, http.StatusConflict, "ni pavziranega vnosa, ki bi ga lahko nadaljevali")
+		return
+	}
+	e.Events = append(e.Events, TimeEvent{Type: EventStart, At: now})
+	e.Status = StatusRunning
+	e.UpdatedAt = now
+	if err := s.persistTimerEntry(r.Context(), e); err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	s.timerResponse(w, a, e)
 }
 
 func (s *Server) handleTimerStop(w http.ResponseWriter, r *http.Request) {
 	a := authFrom(r)
 	now := time.Now().UTC()
-	var e Entry
-	err := s.entries.FindOneAndUpdate(r.Context(),
-		bson.M{"userId": a.User.ID, "status": bson.M{"$in": []string{StatusRunning, StatusPaused}}},
-		bson.M{"$set": bson.M{
-			"status":          StatusStopped,
-			"open":            false,
-			"endedAt":         now,
-			"updatedAt":       now,
-			"pauses.$[p].end": now, // zapre morebitno odprto pavzo
-		}},
-		options.FindOneAndUpdate().
-			SetReturnDocument(options.After).
-			SetArrayFilters(options.ArrayFilters{Filters: []any{bson.M{"p.end": bson.M{"$exists": false}}}}),
-	).Decode(&e)
-	s.finishTimerOp(w, a, e, err, "ni tekočega vnosa")
+	e, err := s.findOpenTimerEntry(r.Context(), a.User.ID)
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		writeErr(w, http.StatusConflict, "ni tekočega vnosa")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	e.EnsureEvents()
+	if e.Status == StatusRunning {
+		e.Events = append(e.Events, TimeEvent{Type: EventStop, At: now})
+	}
+	e.Status = StatusStopped
+	e.Open = false
+	e.EndedAt = &now
+	e.UpdatedAt = now
+	if err := s.persistTimerEntry(r.Context(), e); err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	s.timerResponse(w, a, e)
 }
 
 func (s *Server) finishTimerOp(w http.ResponseWriter, a *Auth, e Entry, err error, conflictMsg string) {
@@ -388,7 +436,7 @@ type entryReq struct {
 }
 
 // buildEntryFields preveri časovnice in vrne očiščene podatke.
-func buildEntryFields(req *entryReq) (string, []Pause, string) {
+func buildEntryFields(req *entryReq) (string, []TimeEvent, string) {
 	desc := strings.TrimSpace(req.Description)
 	if len(desc) > maxDescription {
 		return "", nil, "opis je predolg"
@@ -421,7 +469,11 @@ func buildEntryFields(req *entryReq) (string, []Pause, string) {
 			return "", nil, "pavze se prekrivajo"
 		}
 	}
-	return desc, pauses, ""
+	events, err := eventsFromManualEntry(start, end, pauses)
+	if err != nil {
+		return "", nil, err.Error()
+	}
+	return desc, events, ""
 }
 
 func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
@@ -450,19 +502,20 @@ func (s *Server) handleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	desc, pauses, msg := buildEntryFields(&req)
+	desc, events, msg := buildEntryFields(&req)
 	if msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	now := time.Now().UTC()
 	end := req.EndedAt.UTC()
+	start := firstStartAt(events)
 	e := Entry{
 		UserID:      target,
 		Description: desc,
-		StartedAt:   req.StartedAt.UTC(),
+		StartedAt:   start,
 		EndedAt:     &end,
-		Pauses:      pauses,
+		Events:      events,
 		Status:      StatusStopped,
 		Open:        false,
 		CreatedAt:   now,
@@ -516,17 +569,19 @@ func (s *Server) handleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	desc, pauses, msg := buildEntryFields(&req)
+	desc, events, msg := buildEntryFields(&req)
 	if msg != "" {
 		writeErr(w, http.StatusBadRequest, msg)
 		return
 	}
 	end := req.EndedAt.UTC()
+	start := firstStartAt(events)
 	_, err := s.entries.UpdateOne(r.Context(), bson.M{"_id": e.ID, "status": StatusStopped}, bson.M{"$set": bson.M{
 		"description": desc,
-		"startedAt":   req.StartedAt.UTC(),
+		"startedAt":   start,
 		"endedAt":     end,
-		"pauses":      pauses,
+		"events":      events,
+		"pauses":      []Pause{},
 		"updatedAt":   time.Now().UTC(),
 	}})
 	if err != nil {

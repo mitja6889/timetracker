@@ -12,6 +12,13 @@ export interface Pause {
   end: string | null
 }
 
+export type TimeEventType = 'start' | 'stop'
+
+export interface TimeEvent {
+  type: TimeEventType
+  at: string
+}
+
 export type EntryStatus = 'running' | 'paused' | 'stopped'
 
 export interface Entry {
@@ -22,7 +29,8 @@ export interface Entry {
   description: string
   startedAt: string
   endedAt: string | null
-  pauses: Pause[]
+  events: TimeEvent[]
+  pauses?: Pause[]
   status: EntryStatus
   workSeconds: number
   canEdit: boolean

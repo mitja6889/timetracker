@@ -82,7 +82,8 @@ type Entry struct {
 	Description string             `bson:"description" json:"description"`
 	StartedAt   time.Time          `bson:"startedAt" json:"startedAt"`
 	EndedAt     *time.Time         `bson:"endedAt,omitempty" json:"endedAt"`
-	Pauses      []Pause            `bson:"pauses" json:"pauses"`
+	Events      []TimeEvent        `bson:"events" json:"events"`
+	Pauses      []Pause            `bson:"pauses,omitempty" json:"pauses,omitempty"`
 	Status      string             `bson:"status" json:"status"`
 	// Open je true, dokler vnos teče ali je pavziran; unikatni delni indeks
 	// zagotavlja največ en odprt vnos na uporabnika (tudi ob dvojnem kliku).
@@ -91,27 +92,11 @@ type Entry struct {
 	UpdatedAt time.Time `bson:"updatedAt" json:"updatedAt"`
 }
 
-// WorkSeconds vrne čisti delovni čas (brez pavz). Za tekoče vnose šteje do "now".
+// WorkSeconds izračuna delovni čas iz zaporedja dogodkov start/stop.
 func (e *Entry) WorkSeconds(now time.Time) int64 {
-	end := now
-	if e.EndedAt != nil {
-		end = *e.EndedAt
+	e.EnsureEvents()
+	if len(e.Events) > 0 {
+		return WorkSecondsFromEvents(e.Events, now)
 	}
-	total := end.Sub(e.StartedAt)
-	for _, p := range e.Pauses {
-		pe := end
-		if p.End != nil {
-			pe = *p.End
-		}
-		if pe.After(end) {
-			pe = end
-		}
-		if pe.After(p.Start) {
-			total -= pe.Sub(p.Start)
-		}
-	}
-	if total < 0 {
-		return 0
-	}
-	return int64(total.Seconds())
+	return 0
 }

@@ -1,4 +1,4 @@
-import type { Entry } from './api'
+import type { Entry, TimeEvent } from './api'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
@@ -68,16 +68,51 @@ export function nextDayStartISO(dateStr: string): string {
   return d.toISOString()
 }
 
-/** Enak izračun kot na strežniku: čas brez pavz; tekoči vnosi štejejo do nowMs. */
+export function workSecondsFromEvents(events: TimeEvent[], nowMs: number): number {
+  if (!events.length) return 0
+  let totalMs = 0
+  let lastStart: number | null = null
+  for (const ev of events) {
+    const at = new Date(ev.at).getTime()
+    if (ev.type === 'start') {
+      lastStart = at
+    } else if (ev.type === 'stop' && lastStart !== null) {
+      if (at > lastStart) totalMs += at - lastStart
+      lastStart = null
+    }
+  }
+  if (lastStart !== null && nowMs > lastStart) totalMs += nowMs - lastStart
+  return Math.max(0, Math.floor(totalMs / 1000))
+}
+
+/** Enak izračun kot na strežniku: vsota intervalov med start/stop dogodki. */
 export function calcWorkSeconds(e: Entry, nowMs: number): number {
+  if (e.events?.length) {
+    return workSecondsFromEvents(e.events, nowMs)
+  }
+  const pauses = e.pauses ?? []
   const start = new Date(e.startedAt).getTime()
   const end = e.endedAt ? new Date(e.endedAt).getTime() : nowMs
   let total = end - start
-  for (const p of e.pauses) {
+  for (const p of pauses) {
     let pe = p.end ? new Date(p.end).getTime() : end
     if (pe > end) pe = end
     const ps = new Date(p.start).getTime()
     if (pe > ps) total -= pe - ps
   }
   return Math.max(0, Math.floor(total / 1000))
+}
+
+export function eventTypeLabel(type: TimeEvent['type']): string {
+  return type === 'start' ? 'Start' : 'Stop'
+}
+
+/** Število pavz (intervalov stop med delom), iz dogodkov ali starega polja pauses. */
+export function pauseCount(e: Entry): number {
+  if (e.events?.length) {
+    const stops = e.events.filter((x) => x.type === 'stop').length
+    if (e.status === 'stopped') return Math.max(0, stops - 1)
+    return stops
+  }
+  return e.pauses?.length ?? 0
 }

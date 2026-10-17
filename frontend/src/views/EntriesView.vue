@@ -44,7 +44,8 @@ const error = ref('')
 
 const editing = ref<Entry | null>(null)
 const showForm = ref(false)
-const expanded = ref<Set<string>>(new Set())
+const expandedDays = ref<Set<string>>(new Set())
+const expandedEntries = ref<Set<string>>(new Set())
 
 const totalPages = computed(() => Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize.value)))
 const rangeWorkSeconds = computed(() => data.value?.rangeWorkSeconds ?? 0)
@@ -94,15 +95,33 @@ const groupedEntries = computed((): DayGroup[] => {
   })
 })
 
-function isExpanded(id: string) {
-  return expanded.value.has(id)
+function isDayExpanded(dayKey: string) {
+  return expandedDays.value.has(dayKey)
 }
 
-function toggleExpanded(id: string) {
-  const next = new Set(expanded.value)
+function toggleDay(dayKey: string) {
+  const next = new Set(expandedDays.value)
+  if (next.has(dayKey)) {
+    next.delete(dayKey)
+    expandedEntries.value = new Set([...expandedEntries.value].filter((id) => {
+      const entry = data.value?.items.find((e) => e.id === id)
+      return entry && localDayKey(entry.startedAt) !== dayKey
+    }))
+  } else {
+    next.add(dayKey)
+  }
+  expandedDays.value = next
+}
+
+function isEntryExpanded(id: string) {
+  return expandedEntries.value.has(id)
+}
+
+function toggleEntry(id: string) {
+  const next = new Set(expandedEntries.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
-  expanded.value = next
+  expandedEntries.value = next
 }
 
 // zaščita pred zaostalimi odgovori pri hitrem spreminjanju filtrov
@@ -111,7 +130,8 @@ async function load() {
   const mine = ++seq
   loading.value = true
   error.value = ''
-  expanded.value = new Set()
+  expandedDays.value = new Set()
+  expandedEntries.value = new Set()
   try {
     const res = await api.entries({
       page: page.value,
@@ -199,6 +219,13 @@ async function remove(e: Entry) {
 
 const statusLabel: Record<string, string> = { running: 'Teče', paused: 'Pavza', stopped: 'Zaključen' }
 
+function entryCountLabel(n: number): string {
+  if (n === 1) return '1 vnos'
+  if (n === 2) return '2 vnosa'
+  if (n === 3 || n === 4) return `${n} vnosi`
+  return `${n} vnosov`
+}
+
 const sortOptions = [
   { value: 'startedAt', label: 'Datum začetka' },
   { value: 'endedAt', label: 'Datum konca' },
@@ -285,75 +312,89 @@ onMounted(async () => {
     <div class="entries-list" :class="{ loading }">
       <p v-if="data && !data.items.length" class="muted center entries-empty">Ni vnosov za izbrano obdobje.</p>
 
-      <section v-for="group in groupedEntries" :key="group.key" class="entry-day-group">
-        <header class="entry-day-head">
-          <h3 class="entry-day-label">{{ group.label }}</h3>
-          <span class="entry-day-stats muted small">
-            {{ group.entries.length }} · {{ formatDuration(group.totalSeconds) }}
-          </span>
-        </header>
-
-        <div class="entry-rows">
-          <article
-            v-for="e in group.entries"
-            :key="e.id"
-            class="entry-row"
-            :class="{ expanded: isExpanded(e.id) }"
+      <div class="entry-day-rows">
+        <section
+          v-for="group in groupedEntries"
+          :key="group.key"
+          class="entry-day-row"
+          :class="{ expanded: isDayExpanded(group.key) }"
+        >
+          <button
+            type="button"
+            class="entry-day-summary"
+            :aria-expanded="isDayExpanded(group.key)"
+            @click="toggleDay(group.key)"
           >
-            <button
-              type="button"
-              class="entry-row-summary"
-              :aria-expanded="isExpanded(e.id)"
-              @click="toggleExpanded(e.id)"
-            >
-              <span class="entry-chevron" aria-hidden="true">›</span>
-              <span class="entry-row-body">
-                <span class="entry-row-title">{{ e.description || 'Brez opisa' }}</span>
-                <span class="entry-row-meta">
-                  <span>{{ formatTime(e.startedAt) }}–{{ formatTime(e.endedAt) }}</span>
-                  <span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span>
-                </span>
-                <span v-if="canViewAll" class="entry-row-user muted small">{{ e.name }}</span>
-              </span>
-              <span class="entry-row-duration">{{ formatDuration(e.workSeconds) }}</span>
-            </button>
+            <span class="entry-chevron" aria-hidden="true">›</span>
+            <span class="entry-day-summary-body">
+              <span class="entry-day-label">{{ group.label }}</span>
+              <span class="entry-day-meta muted small">{{ entryCountLabel(group.entries.length) }}</span>
+            </span>
+            <span class="entry-row-duration">{{ formatDuration(group.totalSeconds) }}</span>
+          </button>
 
-            <div v-show="isExpanded(e.id)" class="entry-row-detail">
-              <dl class="detail-grid">
-                <template v-if="canViewAll">
-                  <dt>Uporabnik</dt>
-                  <dd>{{ e.name }} <span class="muted">({{ e.username }})</span></dd>
-                </template>
-                <dt>Opis</dt>
-                <dd>{{ e.description || '—' }}</dd>
-                <dt>Začetek</dt>
-                <dd>{{ formatDateTime(e.startedAt) }}</dd>
-                <dt>Konec</dt>
-                <dd>{{ formatDateTime(e.endedAt) }}</dd>
-                <dt>Delovni čas</dt>
-                <dd>{{ formatDuration(e.workSeconds) }}</dd>
-                <dt>Status</dt>
-                <dd><span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span></dd>
-                <dt>Pavze</dt>
-                <dd>
-                  <ul v-if="e.pauses.length" class="pause-list">
-                    <li v-for="(p, i) in e.pauses" :key="i">
-                      {{ formatDateTime(p.start) }} – {{ p.end ? formatDateTime(p.end) : '…' }}
-                    </li>
-                  </ul>
-                  <span v-else class="muted">Brez pavz</span>
-                </dd>
-              </dl>
-              <div v-if="e.canEdit || e.canDelete" class="entry-row-actions">
-                <button v-if="e.canEdit" type="button" class="btn ghost" @click.stop="openEdit(e)">Uredi</button>
-                <button v-if="e.canDelete" type="button" class="btn ghost danger-text" @click.stop="remove(e)">
-                  Izbriši
-                </button>
+          <div v-show="isDayExpanded(group.key)" class="entry-day-children">
+            <article
+              v-for="e in group.entries"
+              :key="e.id"
+              class="entry-item"
+              :class="{ expanded: isEntryExpanded(e.id) }"
+            >
+              <button
+                type="button"
+                class="entry-item-summary"
+                :aria-expanded="isEntryExpanded(e.id)"
+                @click="toggleEntry(e.id)"
+              >
+                <span class="entry-chevron entry-chevron-sm" aria-hidden="true">›</span>
+                <span class="entry-row-body">
+                  <span class="entry-row-title">{{ e.description || 'Brez opisa' }}</span>
+                  <span class="entry-row-meta">
+                    <span>{{ formatTime(e.startedAt) }}–{{ formatTime(e.endedAt) }}</span>
+                    <span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span>
+                  </span>
+                  <span v-if="canViewAll" class="entry-row-user muted small">{{ e.name }}</span>
+                </span>
+                <span class="entry-item-duration">{{ formatDuration(e.workSeconds) }}</span>
+              </button>
+
+              <div v-show="isEntryExpanded(e.id)" class="entry-row-detail entry-item-detail">
+                <dl class="detail-grid">
+                  <template v-if="canViewAll">
+                    <dt>Uporabnik</dt>
+                    <dd>{{ e.name }} <span class="muted">({{ e.username }})</span></dd>
+                  </template>
+                  <dt>Opis</dt>
+                  <dd>{{ e.description || '—' }}</dd>
+                  <dt>Začetek</dt>
+                  <dd>{{ formatDateTime(e.startedAt) }}</dd>
+                  <dt>Konec</dt>
+                  <dd>{{ formatDateTime(e.endedAt) }}</dd>
+                  <dt>Delovni čas</dt>
+                  <dd>{{ formatDuration(e.workSeconds) }}</dd>
+                  <dt>Status</dt>
+                  <dd><span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span></dd>
+                  <dt>Pavze</dt>
+                  <dd>
+                    <ul v-if="e.pauses.length" class="pause-list">
+                      <li v-for="(p, i) in e.pauses" :key="i">
+                        {{ formatDateTime(p.start) }} – {{ p.end ? formatDateTime(p.end) : '…' }}
+                      </li>
+                    </ul>
+                    <span v-else class="muted">Brez pavz</span>
+                  </dd>
+                </dl>
+                <div v-if="e.canEdit || e.canDelete" class="entry-row-actions">
+                  <button v-if="e.canEdit" type="button" class="btn ghost" @click.stop="openEdit(e)">Uredi</button>
+                  <button v-if="e.canDelete" type="button" class="btn ghost danger-text" @click.stop="remove(e)">
+                    Izbriši
+                  </button>
+                </div>
               </div>
-            </div>
-          </article>
-        </div>
-      </section>
+            </article>
+          </div>
+        </section>
+      </div>
     </div>
 
     <div class="pager pager-compact">

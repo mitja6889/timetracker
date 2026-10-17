@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { api, ApiError, type UserRow } from '../api'
 import { useAuth } from '../stores/auth'
 import AppModal from './AppModal.vue'
@@ -31,6 +31,26 @@ const form = reactive({
 })
 const error = ref('')
 const busy = ref(false)
+const nextHint = ref<'start' | 'stop' | null>(null)
+
+async function refreshHint() {
+  try {
+    const h = await api.timeEventHint(canPickUser.value && form.userId ? form.userId : undefined)
+    nextHint.value = h.nextType
+    form.type = h.nextType
+  } catch {
+    nextHint.value = null
+  }
+}
+
+watch(
+  () => form.userId,
+  () => {
+    void refreshHint()
+  },
+)
+
+void refreshHint()
 
 async function save() {
   error.value = ''
@@ -68,6 +88,10 @@ async function save() {
           <option value="stop">Stop</option>
         </select>
       </label>
+      <p v-if="nextHint" class="muted small">
+        Po zaporedju dogodkov je pričakovan naslednji tip:
+        <strong>{{ nextHint === 'start' ? 'Start' : 'Stop' }}</strong>.
+      </p>
       <div class="grid2">
         <label>
           Datum

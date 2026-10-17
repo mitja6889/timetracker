@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -167,8 +169,71 @@ func (s *Server) validateNewTimeEvent(ctx context.Context, userID primitive.Obje
 	if err != nil {
 		return err
 	}
-	trial := append(existing, rec)
+	trial := append(existing, trialTimeEventRecord(rec))
 	return validateUserTimeEvents(trial)
+}
+
+// parseManualEventAt razčleni datum in čas (HH:MM ali HH:MM:SS) v Europe/Ljubljana.
+// Če sekunde niso podane: start = :00, stop = :59 (enak minutni zapis, smiselno zaporedje).
+func parseManualEventAt(date, timePart, eventType string) (time.Time, error) {
+	date = strings.TrimSpace(date)
+	timePart = strings.TrimSpace(timePart)
+	if date == "" || timePart == "" {
+		return time.Time{}, fmt.Errorf("datum in čas sta obvezna")
+	}
+	parts := strings.Split(timePart, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return time.Time{}, fmt.Errorf("neveljaven čas")
+	}
+	hour, err := strconv.Atoi(parts[0])
+	if err != nil || hour < 0 || hour > 23 {
+		return time.Time{}, fmt.Errorf("neveljaven čas")
+	}
+	minute, err := strconv.Atoi(parts[1])
+	if err != nil || minute < 0 || minute > 59 {
+		return time.Time{}, fmt.Errorf("neveljaven čas")
+	}
+	second := 0
+	if len(parts) == 3 {
+		second, err = strconv.Atoi(parts[2])
+		if err != nil || second < 0 || second > 59 {
+			return time.Time{}, fmt.Errorf("neveljaven čas")
+		}
+	} else if eventType == EventStop {
+		second = 59
+	}
+	day, err := time.ParseInLocation("2006-01-02", date, appLoc)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("neveljaven datum")
+	}
+	t := time.Date(day.Year(), day.Month(), day.Day(), hour, minute, second, 0, appLoc)
+	return t.UTC(), nil
+}
+
+func (s *Server) handleTimeEventHint(w http.ResponseWriter, r *http.Request) {
+	a := authFrom(r)
+	target, status, msg := s.resolveManualTimeUser(a, strings.TrimSpace(r.URL.Query().Get("userId")))
+	if status != 0 {
+		writeErr(w, status, msg)
+		return
+	}
+	_, last, err := s.timerRunning(r.Context(), target)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "napaka baze")
+		return
+	}
+	if last == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"lastType": nil,
+			"nextType": EventStart,
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"lastType": last.Type,
+		"lastAt":   last.At,
+		"nextType": nextEventTypeAfter(last.Type),
+	})
 }
 
 func (s *Server) timerRunning(ctx context.Context, userID primitive.ObjectID) (bool, *TimeEventRecord, error) {
@@ -545,18 +610,11 @@ func (s *Server) handleCreateTimeEvent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "tip mora biti start ali stop")
 		return
 	}
-	date := strings.TrimSpace(req.Date)
-	timePart := strings.TrimSpace(req.Time)
-	if date == "" || timePart == "" {
-		writeErr(w, http.StatusBadRequest, "datum in čas sta obvezna")
-		return
-	}
-	at, err := time.ParseInLocation("2006-01-02T15:04", date+"T"+timePart, appLoc)
+	at, err := parseManualEventAt(req.Date, req.Time, req.Type)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "neveljaven datum ali čas")
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	at = at.UTC()
 	if at.After(time.Now().UTC().Add(time.Minute)) {
 		writeErr(w, http.StatusBadRequest, "dogodek ne sme biti v prihodnosti")
 		return

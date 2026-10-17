@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 const (
@@ -32,14 +34,36 @@ func validateUserTimeEvents(events []TimeEventRecord) error {
 		return fmt.Errorf("prvi dogodek mora biti start")
 	}
 	for i := 1; i < len(sorted); i++ {
-		if sorted[i].Type == sorted[i-1].Type {
-			if sorted[i].Type == EventStart {
+		prev, cur := sorted[i-1], sorted[i]
+		if !cur.At.After(prev.At) {
+			if cur.At.Equal(prev.At) {
+				return fmt.Errorf("dva dogodka ne smeta imeti enakega časa")
+			}
+			return fmt.Errorf("dogodki morajo biti po času naraščajoče")
+		}
+		if cur.Type == prev.Type {
+			if cur.Type == EventStart {
 				return fmt.Errorf("dva zaporedna start dogodka nista dovoljena")
 			}
 			return fmt.Errorf("dva zaporedna stop dogodka nista dovoljena")
 		}
 	}
 	return nil
+}
+
+// nextEventTypeAfter returns the type that must follow the last event in time order.
+func nextEventTypeAfter(lastType string) string {
+	if lastType == EventStart {
+		return EventStop
+	}
+	return EventStart
+}
+
+func trialTimeEventRecord(rec TimeEventRecord) TimeEventRecord {
+	if rec.ID.IsZero() {
+		rec.ID = primitive.NewObjectID()
+	}
+	return rec
 }
 
 func WorkSecondsFromEvents(events []TimeEvent, now time.Time) int64 {

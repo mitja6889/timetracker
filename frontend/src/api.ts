@@ -252,6 +252,12 @@ export const api = {
   ) => request<{ id: string }>('POST', `/api/time/days/${dayKey}/pauses`, body),
   deleteDayPause: (id: string) => request<{ status: string }>('DELETE', `/api/time/pauses/${id}`),
 
+  timeEventHint: (userId?: string) =>
+    request<{ lastType: 'start' | 'stop' | null; nextType: 'start' | 'stop'; lastAt?: string }>(
+      'GET',
+      '/api/time/events/hint' + qs({ userId }),
+    ),
+
   createTimeEvent: (body: {
     userId?: string
     type: 'start' | 'stop'

@@ -141,6 +141,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/timer/stop", s.requirePerm(PermTimerUse, s.handleTimerStop))
 
 	mux.HandleFunc("GET /api/time/days", s.requireAuth(s.handleTimeDays))
+	mux.HandleFunc("GET /api/time/events/hint", s.requireAuth(s.handleTimeEventHint))
 	mux.HandleFunc("POST /api/time/events", s.requireAuth(s.handleCreateTimeEvent))
 	mux.HandleFunc("DELETE /api/time/events/{id}", s.requireAuth(s.handleDeleteTimeEvent))
 	mux.HandleFunc("POST /api/time/days/{dayKey}/pauses", s.requireAuth(s.handleCreateDayPause))

@@ -178,7 +178,7 @@ onMounted(async () => {
             <h4 class="day-detail-title">Pavze (odštete)</h4>
             <ul v-if="day.pauses.length" class="pause-list-detailed">
               <li v-for="p in day.pauses" :key="p.id">
-                <span>{{ formatDateTime(p.startAt) }} – {{ formatDateTime(p.endAt) }}</span>
+                <span>{{ p.minutes }} min</span>
                 <span v-if="p.note" class="muted small"> · {{ p.note }}</span>
                 <button type="button" class="btn ghost danger-text btn-xs" @click="removePause(p.id)">✕</button>
               </li>

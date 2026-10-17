@@ -32,12 +32,13 @@ type TimeEventRecord struct {
 }
 
 type DayPause struct {
-	ID     primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	UserID primitive.ObjectID `bson:"userId" json:"userId"`
-	DayKey string             `bson:"dayKey" json:"dayKey"`
-	Start  time.Time          `bson:"startAt" json:"startAt"`
-	End    time.Time          `bson:"endAt" json:"endAt"`
-	Note   string             `bson:"note,omitempty" json:"note,omitempty"`
+	ID      primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	UserID  primitive.ObjectID `bson:"userId" json:"userId"`
+	DayKey  string             `bson:"dayKey" json:"dayKey"`
+	Minutes int                `bson:"minutes" json:"minutes"`
+	Start   time.Time          `bson:"startAt,omitempty" json:"-"`
+	End     time.Time          `bson:"endAt,omitempty" json:"-"`
+	Note    string             `bson:"note,omitempty" json:"note,omitempty"`
 }
 
 type timeEventDTO struct {
@@ -47,10 +48,9 @@ type timeEventDTO struct {
 }
 
 type dayPauseDTO struct {
-	ID      string    `json:"id"`
-	StartAt time.Time `json:"startAt"`
-	EndAt   time.Time `json:"endAt"`
-	Note    string    `json:"note,omitempty"`
+	ID      string `json:"id"`
+	Minutes int    `json:"minutes"`
+	Note    string `json:"note,omitempty"`
 }
 
 type timeDayDTO struct {
@@ -135,7 +135,11 @@ func dayWorkSeconds(dayKey string, intervals [][2]time.Time, pauses []DayPause, 
 		if p.DayKey != dayKey {
 			continue
 		}
-		total -= overlapSeconds(p.Start, p.End, dayStart, dayEnd)
+		if p.Minutes > 0 {
+			total -= int64(p.Minutes) * 60
+		} else if p.End.After(p.Start) {
+			total -= overlapSeconds(p.Start, p.End, dayStart, dayEnd)
+		}
 	}
 	if total < 0 {
 		total = 0
@@ -357,7 +361,14 @@ func (s *Server) handleTimeDays(w http.ResponseWriter, r *http.Request) {
 		rangeTotal += ws
 		pDTO := make([]dayPauseDTO, 0, len(pauseByDay[dk]))
 		for _, p := range pauseByDay[dk] {
-			pDTO = append(pDTO, dayPauseDTO{ID: p.ID.Hex(), StartAt: p.Start, EndAt: p.End, Note: p.Note})
+			mins := p.Minutes
+			if mins <= 0 && p.End.After(p.Start) {
+				mins = int(p.End.Sub(p.Start).Minutes())
+				if mins < 1 {
+					mins = 1
+				}
+			}
+			pDTO = append(pDTO, dayPauseDTO{ID: p.ID.Hex(), Minutes: mins, Note: p.Note})
 		}
 		evs := eventsByDay[dk]
 		if evs == nil {
@@ -411,10 +422,9 @@ func (s *Server) handleCreateDayPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		StartAt time.Time `json:"startAt"`
-		EndAt   time.Time `json:"endAt"`
-		Note    string    `json:"note"`
-		UserID  string    `json:"userId"`
+		Minutes int    `json:"minutes"`
+		Note    string `json:"note"`
+		UserID  string `json:"userId"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -432,13 +442,8 @@ func (s *Server) handleCreateDayPause(w http.ResponseWriter, r *http.Request) {
 		}
 		target = id
 	}
-	start, end := req.StartAt.UTC(), req.EndAt.UTC()
-	if !end.After(start) {
-		writeErr(w, http.StatusBadRequest, "konec mora biti po začetku")
-		return
-	}
-	if dayKeyInLoc(start) != dayKey || dayKeyInLoc(end) != dayKey {
-		writeErr(w, http.StatusBadRequest, "pavza mora biti znotraj izbranega dne")
+	if req.Minutes < 1 || req.Minutes > 24*60 {
+		writeErr(w, http.StatusBadRequest, "vnesite trajanje pavze med 1 in 1440 minut")
 		return
 	}
 	if len(strings.TrimSpace(req.Note)) > 200 {
@@ -446,11 +451,10 @@ func (s *Server) handleCreateDayPause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := DayPause{
-		UserID: target,
-		DayKey: dayKey,
-		Start:  start,
-		End:    end,
-		Note:   strings.TrimSpace(req.Note),
+		UserID:  target,
+		DayKey:  dayKey,
+		Minutes: req.Minutes,
+		Note:    strings.TrimSpace(req.Note),
 	}
 	res, err := s.dayPauses.InsertOne(r.Context(), p)
 	if err != nil {

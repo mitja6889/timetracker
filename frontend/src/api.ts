@@ -63,8 +63,7 @@ export interface TimeEventRow {
 
 export interface DayPauseRow {
   id: string
-  startAt: string
-  endAt: string
+  minutes: number
   note?: string
 }
 
@@ -249,7 +248,7 @@ export const api = {
     ),
   createDayPause: (
     dayKey: string,
-    body: { startAt: string; endAt: string; note?: string; userId?: string },
+    body: { minutes: number; note?: string; userId?: string },
   ) => request<{ id: string }>('POST', `/api/time/days/${dayKey}/pauses`, body),
   deleteDayPause: (id: string) => request<{ status: string }>('DELETE', `/api/time/pauses/${id}`),
 

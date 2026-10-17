@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -221,21 +223,14 @@ func parseTimeParam(v string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// GET /api/entries?page=&pageSize=&sort=&order=&from=&to=&userId=&status=&q=
-// "from" je vključen, "to" izključen (glede na startedAt).
-// Uporabnik brez pravice entries.view_all vidi VEDNO samo svoje vnose,
-// ne glede na parameter userId.
-func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
-	a := authFrom(r)
-	q := r.URL.Query()
+func (s *Server) entriesFilter(a *Auth, q url.Values) (bson.M, error) {
 	filter := bson.M{}
 
 	if a.Has(PermViewAll) {
 		if uid := q.Get("userId"); uid != "" {
 			id, err := primitive.ObjectIDFromHex(uid)
 			if err != nil {
-				writeErr(w, http.StatusBadRequest, "neveljaven userId")
-				return
+				return nil, errBadRequest("neveljaven userId")
 			}
 			filter["userId"] = id
 		}
@@ -248,8 +243,7 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	case StatusRunning, StatusPaused, StatusStopped:
 		filter["status"] = st
 	default:
-		writeErr(w, http.StatusBadRequest, "neveljaven status")
-		return
+		return nil, errBadRequest("neveljaven status")
 	}
 
 	rng := bson.M{}
@@ -268,6 +262,51 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 			text = text[:100]
 		}
 		filter["description"] = bson.M{"$regex": regexp.QuoteMeta(text), "$options": "i"}
+	}
+	return filter, nil
+}
+
+func (s *Server) sumFilteredWorkSeconds(ctx context.Context, filter bson.M, now time.Time) (int64, error) {
+	cur, err := s.entries.Find(ctx, filter)
+	if err != nil {
+		return 0, err
+	}
+	defer cur.Close(ctx)
+	var sum int64
+	for cur.Next(ctx) {
+		var e Entry
+		if err := cur.Decode(&e); err != nil {
+			return 0, err
+		}
+		sum += e.WorkSeconds(now)
+	}
+	return sum, cur.Err()
+}
+
+type httpError struct {
+	status  int
+	message string
+}
+
+func (e httpError) Error() string { return e.message }
+
+func errBadRequest(msg string) error { return httpError{status: http.StatusBadRequest, message: msg} }
+
+// GET /api/entries?page=&pageSize=&sort=&order=&from=&to=&userId=&status=&q=
+// "from" je vključen, "to" izključen (glede na startedAt).
+// Uporabnik brez pravice entries.view_all vidi VEDNO samo svoje vnose,
+// ne glede na parameter userId.
+func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
+	a := authFrom(r)
+	q := r.URL.Query()
+	filter, err := s.entriesFilter(a, q)
+	if err != nil {
+		if he, ok := err.(httpError); ok {
+			writeErr(w, he.status, he.message)
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	field, ok := sortFields[q.Get("sort")]
@@ -316,11 +355,22 @@ func (s *Server) handleListEntries(w http.ResponseWriter, r *http.Request) {
 	for _, e := range entries {
 		items = append(items, s.toDTO(a, e, names, now))
 	}
+
+	var rangeWorkSeconds int64
+	if q.Get("from") != "" || q.Get("to") != "" {
+		rangeWorkSeconds, err = s.sumFilteredWorkSeconds(r.Context(), filter, now)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "napaka baze")
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items":    items,
-		"total":    total,
-		"page":     page,
-		"pageSize": pageSize,
+		"items":            items,
+		"total":            total,
+		"page":             page,
+		"pageSize":         pageSize,
+		"rangeWorkSeconds": rangeWorkSeconds,
 	})
 }
 

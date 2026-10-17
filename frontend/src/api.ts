@@ -36,6 +36,8 @@ export interface EntriesPage {
   total: number
   page: number
   pageSize: number
+  /** Vsota delovnega časa vseh vnosov, ki ustrezajo filtrom (vključno z obdobjem). */
+  rangeWorkSeconds?: number
 }
 
 export interface TimerState {

@@ -246,7 +246,58 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; 
 }
 .filters label.inline input { width: 100%; }
 
+.entries-toolbar { margin: 8px 0 4px; }
+.filters-toggle { position: relative; }
+.filter-badge {
+  margin-left: 6px;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-text);
+  font-size: 0.7rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.filters-panel { margin-bottom: 8px; }
+
+.range-bar {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.range-bar-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.range-field { display: grid; gap: 4px; font-size: 0.85rem; font-weight: 600; }
+.range-field input { width: 100%; }
+.range-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+}
+.range-total {
+  font-size: clamp(1.35rem, 5vw, 1.75rem);
+  font-variant-numeric: tabular-nums;
+  color: var(--primary);
+}
+
 .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; margin: 0 -4px; padding: 0 4px; }
+.table-scroll .entries-table { min-width: 720px; }
+.entries-table .desc-col { max-width: 220px; white-space: normal; }
+.entries-table th.actions-col,
+.entries-table td.actions { position: sticky; right: 0; background: var(--surface); box-shadow: -6px 0 8px -6px rgba(0, 0, 0, 0.08); }
+.entries-table thead th.actions-col { z-index: 2; }
 .table-wrap.loading { opacity: 0.6; transition: opacity 0.15s; }
 .table { width: 100%; border-collapse: collapse; }
 .table th, .table td {
@@ -370,6 +421,8 @@ label.inline { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; 
     flex: none;
     width: 100%;
   }
+  .range-bar-fields { grid-template-columns: 1fr; }
+  .filters-toggle { width: 100%; }
 
   .table-stack thead {
     position: absolute;

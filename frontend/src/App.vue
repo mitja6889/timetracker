@@ -28,6 +28,10 @@ function logout() {
       </div>
     </header>
 
+    <main class="content">
+      <RouterView />
+    </main>
+
     <nav class="tabbar" aria-label="Mobilna navigacija">
       <RouterLink v-if="auth.has('timer.use')" to="/" class="tabbar-item">
         <span class="tabbar-icon" aria-hidden="true">⏱</span>
@@ -46,10 +50,6 @@ function logout() {
         <span class="tabbar-label">Role</span>
       </RouterLink>
     </nav>
-
-    <main class="content">
-      <RouterView />
-    </main>
   </div>
   <RouterView v-else />
 </template>

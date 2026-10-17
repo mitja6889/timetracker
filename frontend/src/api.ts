@@ -49,8 +49,35 @@ export interface EntriesPage {
 }
 
 export interface TimerState {
-  entry: Entry | null
+  running: boolean
+  runningSince: string | null
+  sessionSeconds: number
   now: string
+}
+
+export interface TimeEventRow {
+  id: string
+  type: TimeEventType
+  at: string
+}
+
+export interface DayPauseRow {
+  id: string
+  startAt: string
+  endAt: string
+  note?: string
+}
+
+export interface TimeDay {
+  dayKey: string
+  events: TimeEventRow[]
+  pauses: DayPauseRow[]
+  workSeconds: number
+}
+
+export interface TimeDaysResult {
+  days: TimeDay[]
+  rangeWorkSeconds: number
 }
 
 export interface Role {
@@ -212,10 +239,19 @@ export const api = {
   deleteUser: (id: string) => request<{ status: string }>('DELETE', `/api/users/${id}`),
 
   timerCurrent: () => request<TimerState>('GET', '/api/timer/current'),
-  timerStart: (description: string) => request<TimerState>('POST', '/api/timer/start', { description }),
-  timerPause: () => request<TimerState>('POST', '/api/timer/pause'),
-  timerResume: () => request<TimerState>('POST', '/api/timer/resume'),
+  timerStart: () => request<TimerState>('POST', '/api/timer/start'),
   timerStop: () => request<TimerState>('POST', '/api/timer/stop'),
+
+  timeDays: (q: { from: string; to: string; userId?: string }) =>
+    request<TimeDaysResult>(
+      'GET',
+      '/api/time/days' + qs({ from: q.from, to: q.to, userId: q.userId }),
+    ),
+  createDayPause: (
+    dayKey: string,
+    body: { startAt: string; endAt: string; note?: string; userId?: string },
+  ) => request<{ id: string }>('POST', `/api/time/days/${dayKey}/pauses`, body),
+  deleteDayPause: (id: string) => request<{ status: string }>('DELETE', `/api/time/pauses/${id}`),
 
   entries: (q: EntryQuery) =>
     request<EntriesPage>(

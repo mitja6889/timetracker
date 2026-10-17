@@ -1,24 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { api, ApiError, type Entry, type EntriesPage, type UserRow } from '../api'
-import EntryForm from '../components/EntryForm.vue'
+import { api, ApiError, type TimeDay, type UserRow } from '../api'
+import DayPauseModal from '../components/DayPauseModal.vue'
 import { useAuth } from '../stores/auth'
-import {
-  dayStartISO,
-  formatDateTime,
-  formatDayGroupLabel,
-  formatDuration,
-  formatTime,
-  eventTypeLabel,
-  localDayKey,
-  nextDayStartISO,
-  pauseCount,
-} from '../utils'
+import { formatDateTime, formatDayGroupLabel, formatDuration, eventTypeLabel } from '../utils'
 
 const auth = useAuth()
-
 const canViewAll = computed(() => auth.has('entries.view_all'))
-const canCreate = computed(() => auth.has('entries.edit_own') || auth.has('entries.edit_all'))
+const canAddPause = computed(() => auth.has('timer.use') || auth.has('entries.edit_own'))
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 const todayLocal = () => {
@@ -31,216 +20,75 @@ const monthStartLocal = () => {
 }
 
 const range = reactive({ from: monthStartLocal(), to: todayLocal() })
-const filters = reactive({ q: '', status: '', userId: '' })
-const showFilters = ref(false)
-
-const sort = ref('startedAt')
-const order = ref<'asc' | 'desc'>('desc')
-const page = ref(1)
-const pageSize = ref(10)
-
-const data = ref<EntriesPage | null>(null)
+const filterUserId = ref('')
 const users = ref<UserRow[]>([])
+
+const days = ref<TimeDay[]>([])
+const rangeWorkSeconds = ref(0)
 const loading = ref(false)
 const error = ref('')
 
-const editing = ref<Entry | null>(null)
-const showForm = ref(false)
 const expandedDays = ref<Set<string>>(new Set())
-const expandedEntries = ref<Set<string>>(new Set())
+const pauseDayKey = ref<string | null>(null)
 
-const totalPages = computed(() => Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize.value)))
-const rangeWorkSeconds = computed(() => data.value?.rangeWorkSeconds ?? 0)
-const hasRange = computed(() => Boolean(range.from || range.to))
 const todayKey = computed(() => todayLocal())
 
-const activeFilterCount = computed(() => {
-  let n = 0
-  if (filters.q.trim()) n++
-  if (filters.status) n++
-  if (filters.userId) n++
-  return n
-})
-
-interface DayGroup {
-  key: string
-  label: string
-  totalSeconds: number
-  entries: Entry[]
+function isDayExpanded(key: string) {
+  return expandedDays.value.has(key)
 }
 
-const groupedEntries = computed((): DayGroup[] => {
-  const items = data.value?.items ?? []
-  const byDay = new Map<string, Entry[]>()
-  for (const e of items) {
-    const key = localDayKey(e.startedAt)
-    const list = byDay.get(key)
-    if (list) list.push(e)
-    else byDay.set(key, [e])
-  }
-
-  const keys = [...byDay.keys()].sort((a, b) => {
-    if (sort.value === 'startedAt') {
-      return order.value === 'asc' ? a.localeCompare(b) : b.localeCompare(a)
-    }
-    return b.localeCompare(a)
-  })
-
-  return keys.map((key) => {
-    const entries = byDay.get(key) ?? []
-    return {
-      key,
-      label: formatDayGroupLabel(key, todayKey.value),
-      totalSeconds: entries.reduce((s, e) => s + e.workSeconds, 0),
-      entries,
-    }
-  })
-})
-
-function isDayExpanded(dayKey: string) {
-  return expandedDays.value.has(dayKey)
-}
-
-function toggleDay(dayKey: string) {
+function toggleDay(key: string) {
   const next = new Set(expandedDays.value)
-  if (next.has(dayKey)) {
-    next.delete(dayKey)
-    expandedEntries.value = new Set([...expandedEntries.value].filter((id) => {
-      const entry = data.value?.items.find((e) => e.id === id)
-      return entry && localDayKey(entry.startedAt) !== dayKey
-    }))
-  } else {
-    next.add(dayKey)
-  }
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
   expandedDays.value = next
 }
 
-function isEntryExpanded(id: string) {
-  return expandedEntries.value.has(id)
+function dayLabel(key: string) {
+  return formatDayGroupLabel(key, todayKey.value)
 }
 
-function toggleEntry(id: string) {
-  const next = new Set(expandedEntries.value)
-  if (next.has(id)) next.delete(id)
-  else next.add(id)
-  expandedEntries.value = next
-}
-
-// zaščita pred zaostalimi odgovori pri hitrem spreminjanju filtrov
-let seq = 0
 async function load() {
-  const mine = ++seq
   loading.value = true
   error.value = ''
-  expandedDays.value = new Set()
-  expandedEntries.value = new Set()
   try {
-    const res = await api.entries({
-      page: page.value,
-      pageSize: pageSize.value,
-      sort: sort.value,
-      order: order.value,
-      q: filters.q.trim() || undefined,
-      status: filters.status || undefined,
-      userId: canViewAll.value ? filters.userId || undefined : undefined,
-      from: range.from ? dayStartISO(range.from) : undefined,
-      to: range.to ? nextDayStartISO(range.to) : undefined,
+    const res = await api.timeDays({
+      from: range.from,
+      to: range.to,
+      userId: canViewAll.value && filterUserId.value ? filterUserId.value : undefined,
     })
-    if (mine !== seq) return
-    data.value = res
-    if (res.items.length === 0 && page.value > 1) {
-      page.value = Math.max(1, Math.ceil(res.total / pageSize.value))
-      await load()
-    }
+    days.value = res.days
+    rangeWorkSeconds.value = res.rangeWorkSeconds
   } catch (e) {
-    if (mine === seq) error.value = e instanceof ApiError ? e.message : 'Napaka pri nalaganju'
+    error.value = e instanceof ApiError ? e.message : 'Napaka pri nalaganju'
   } finally {
-    if (mine === seq) loading.value = false
+    loading.value = false
   }
 }
 
-function resetAndLoad() {
-  page.value = 1
-  load()
+watch([() => range.from, () => range.to, filterUserId], load)
+
+function openPause(dayKey: string, ev: Event) {
+  ev.stopPropagation()
+  pauseDayKey.value = dayKey
 }
 
-let debounce: number | undefined
-watch(
-  () => filters.q,
-  () => {
-    window.clearTimeout(debounce)
-    debounce = window.setTimeout(resetAndLoad, 300)
-  },
-)
-watch([() => filters.status, () => filters.userId, pageSize], resetAndLoad)
-watch([() => range.from, () => range.to], resetAndLoad)
-watch(sort, resetAndLoad)
-
-function toggleOrder() {
-  order.value = order.value === 'asc' ? 'desc' : 'asc'
-  resetAndLoad()
-}
-
-function clearFilters() {
-  filters.q = ''
-  filters.status = ''
-  filters.userId = ''
-}
-
-function toggleFilters() {
-  showFilters.value = !showFilters.value
-}
-
-function goto(p: number) {
-  page.value = Math.min(Math.max(1, p), totalPages.value)
-  load()
-}
-
-function openCreate() {
-  editing.value = null
-  showForm.value = true
-}
-function openEdit(e: Entry) {
-  editing.value = e
-  showForm.value = true
-}
-function onSaved() {
-  showForm.value = false
-  load()
-}
-
-async function remove(e: Entry) {
-  if (!window.confirm(`Izbrišem vnos "${e.description || 'brez opisa'}" (${formatDateTime(e.startedAt)})?`)) return
+async function removePause(id: string) {
+  if (!window.confirm('Izbrišem pavzo?')) return
   try {
-    await api.deleteEntry(e.id)
+    await api.deleteDayPause(id)
     await load()
-  } catch (err) {
-    error.value = err instanceof ApiError ? err.message : 'Brisanje ni uspelo'
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : 'Brisanje ni uspelo'
   }
 }
-
-const statusLabel: Record<string, string> = { running: 'Teče', paused: 'Pavza', stopped: 'Zaključen' }
-
-function entryCountLabel(n: number): string {
-  if (n === 1) return '1 vnos'
-  if (n === 2) return '2 vnosa'
-  if (n === 3 || n === 4) return `${n} vnosi`
-  return `${n} vnosov`
-}
-
-const sortOptions = [
-  { value: 'startedAt', label: 'Datum začetka' },
-  { value: 'endedAt', label: 'Datum konca' },
-  { value: 'description', label: 'Opis' },
-  { value: 'status', label: 'Status' },
-]
 
 onMounted(async () => {
-  if (canViewAll.value || auth.has('entries.edit_all')) {
+  if (canViewAll.value) {
     try {
       users.value = await api.users()
     } catch {
-      /* seznam uporabnikov ni nujen */
+      /* optional */
     }
   }
   await load()
@@ -249,12 +97,9 @@ onMounted(async () => {
 
 <template>
   <div class="card entries-page">
-    <div class="row between wrap page-head">
-      <h2>Vnosi <small v-if="!canViewAll" class="muted">(moji)</small></h2>
-      <button v-if="canCreate" type="button" class="btn primary" @click="openCreate">+ Nov</button>
-    </div>
+    <h2>Beleženje po dnevih</h2>
 
-    <section class="range-bar range-bar-compact" aria-label="Obdobje in vsota časa">
+    <section class="range-bar range-bar-compact" aria-label="Obdobje">
       <div class="range-bar-fields">
         <label class="range-field">
           <span>Od</span>
@@ -266,165 +111,84 @@ onMounted(async () => {
         </label>
       </div>
       <div class="range-summary">
-        <strong class="range-total">{{ hasRange ? formatDuration(rangeWorkSeconds) : '—' }}</strong>
-        <span v-if="hasRange" class="muted small">{{ data?.total ?? 0 }} vnosov v obdobju</span>
+        <strong class="range-total">{{ formatDuration(rangeWorkSeconds) }}</strong>
+        <span class="muted small">skupaj v obdobju (dogodki − pavze)</span>
       </div>
     </section>
 
-    <div class="entries-toolbar row wrap">
-      <button
-        type="button"
-        class="btn ghost filters-toggle"
-        :aria-expanded="showFilters"
-        @click="toggleFilters"
-      >
-        Filtri
-        <span v-if="activeFilterCount" class="filter-badge">{{ activeFilterCount }}</span>
-      </button>
+    <div v-if="canViewAll" class="filters-panel">
       <label class="sort-control">
-        <span class="muted small">Razvrsti</span>
-        <select v-model="sort">
-          <option v-for="o in sortOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
-        </select>
-      </label>
-      <button type="button" class="btn ghost sort-order-btn" :aria-label="order === 'desc' ? 'Padajoče' : 'Naraščajoče'" @click="toggleOrder">
-        {{ order === 'desc' ? '↓' : '↑' }}
-      </button>
-    </div>
-
-    <div v-show="showFilters" class="filters-panel">
-      <div class="filters">
-        <input v-model="filters.q" placeholder="Išči po opisu…" />
-        <select v-model="filters.status">
-          <option value="">Vsi statusi</option>
-          <option value="running">Teče</option>
-          <option value="paused">Pavza</option>
-          <option value="stopped">Zaključen</option>
-        </select>
-        <select v-if="canViewAll" v-model="filters.userId">
-          <option value="">Vsi uporabniki</option>
+        <span class="muted small">Uporabnik</span>
+        <select v-model="filterUserId">
+          <option value="">Jaz / privzeto</option>
           <option v-for="u in users" :key="u.id" :value="u.id">{{ u.name }}</option>
         </select>
-        <button type="button" class="btn ghost" @click="clearFilters">Počisti</button>
-      </div>
+      </label>
     </div>
 
     <p v-if="error" class="error">{{ error }}</p>
 
-    <div class="entries-list" :class="{ loading }">
-      <p v-if="data && !data.items.length" class="muted center entries-empty">Ni vnosov za izbrano obdobje.</p>
+    <div class="entry-day-rows" :class="{ loading }">
+      <p v-if="!loading && !days.length" class="muted center entries-empty">Ni dogodkov v obdobju.</p>
 
-      <div class="entry-day-rows">
-        <section
-          v-for="group in groupedEntries"
-          :key="group.key"
-          class="entry-day-row"
-          :class="{ expanded: isDayExpanded(group.key) }"
-        >
+      <section
+        v-for="day in days"
+        :key="day.dayKey"
+        class="entry-day-row"
+        :class="{ expanded: isDayExpanded(day.dayKey) }"
+      >
+        <div class="entry-day-summary-row">
           <button
             type="button"
             class="entry-day-summary"
-            :aria-expanded="isDayExpanded(group.key)"
-            @click="toggleDay(group.key)"
+            :aria-expanded="isDayExpanded(day.dayKey)"
+            @click="toggleDay(day.dayKey)"
           >
             <span class="entry-chevron" aria-hidden="true">›</span>
             <span class="entry-day-summary-body">
-              <span class="entry-day-label">{{ group.label }}</span>
-              <span class="entry-day-meta muted small">{{ entryCountLabel(group.entries.length) }}</span>
+              <span class="entry-day-label">{{ dayLabel(day.dayKey) }}</span>
+              <span class="entry-day-meta muted small">
+                {{ day.events.length }} dogodkov · {{ day.pauses.length }} pavz
+              </span>
             </span>
-            <span class="entry-row-duration">{{ formatDuration(group.totalSeconds) }}</span>
+            <span class="entry-row-duration">{{ formatDuration(day.workSeconds) }}</span>
           </button>
+          <button
+            v-if="canAddPause"
+            type="button"
+            class="btn ghost day-pause-btn"
+            @click="openPause(day.dayKey, $event)"
+          >
+            Pavza
+          </button>
+        </div>
 
-          <div v-show="isDayExpanded(group.key)" class="entry-day-children">
-            <article
-              v-for="e in group.entries"
-              :key="e.id"
-              class="entry-item"
-              :class="{ expanded: isEntryExpanded(e.id) }"
-            >
-              <button
-                type="button"
-                class="entry-item-summary"
-                :aria-expanded="isEntryExpanded(e.id)"
-                @click="toggleEntry(e.id)"
-              >
-                <span class="entry-chevron entry-chevron-sm" aria-hidden="true">›</span>
-                <span class="entry-row-body">
-                  <span class="entry-row-title">{{ e.description || 'Brez opisa' }}</span>
-                  <span class="entry-row-meta">
-                    <span>{{ formatTime(e.startedAt) }}–{{ formatTime(e.endedAt) }}</span>
-                    <span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span>
-                  </span>
-                  <span v-if="canViewAll" class="entry-row-user muted small">{{ e.name }}</span>
-                </span>
-                <span class="entry-item-duration">{{ formatDuration(e.workSeconds) }}</span>
-              </button>
-
-              <div v-show="isEntryExpanded(e.id)" class="entry-row-detail entry-item-detail">
-                <dl class="detail-grid">
-                  <template v-if="canViewAll">
-                    <dt>Uporabnik</dt>
-                    <dd>{{ e.name }} <span class="muted">({{ e.username }})</span></dd>
-                  </template>
-                  <dt>Opis</dt>
-                  <dd>{{ e.description || '—' }}</dd>
-                  <dt>Začetek</dt>
-                  <dd>{{ formatDateTime(e.startedAt) }}</dd>
-                  <dt>Konec</dt>
-                  <dd>{{ formatDateTime(e.endedAt) }}</dd>
-                  <dt>Delovni čas</dt>
-                  <dd>{{ formatDuration(e.workSeconds) }}</dd>
-                  <dt>Status</dt>
-                  <dd><span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span></dd>
-                  <dt>Pavze</dt>
-                  <dd>{{ pauseCount(e) }}</dd>
-                  <dt>Dogodki</dt>
-                  <dd>
-                    <ul v-if="e.events?.length" class="event-list">
-                      <li v-for="(ev, i) in e.events" :key="i">
-                        <strong>{{ eventTypeLabel(ev.type) }}</strong>
-                        {{ formatDateTime(ev.at) }}
-                      </li>
-                    </ul>
-                    <span v-else class="muted">Brez dogodkov</span>
-                  </dd>
-                </dl>
-                <div v-if="e.canEdit || e.canDelete" class="entry-row-actions">
-                  <button v-if="e.canEdit" type="button" class="btn ghost" @click.stop="openEdit(e)">Uredi</button>
-                  <button v-if="e.canDelete" type="button" class="btn ghost danger-text" @click.stop="remove(e)">
-                    Izbriši
-                  </button>
-                </div>
-              </div>
-            </article>
+        <div v-show="isDayExpanded(day.dayKey)" class="entry-day-children">
+          <div class="day-detail-block">
+            <h4 class="day-detail-title">Dogodki</h4>
+            <ul v-if="day.events.length" class="event-list">
+              <li v-for="ev in day.events" :key="ev.id">
+                <strong>{{ eventTypeLabel(ev.type) }}</strong>
+                {{ formatDateTime(ev.at) }}
+              </li>
+            </ul>
+            <p v-else class="muted small">Brez dogodkov.</p>
           </div>
-        </section>
-      </div>
+          <div class="day-detail-block">
+            <h4 class="day-detail-title">Pavze (odštete)</h4>
+            <ul v-if="day.pauses.length" class="pause-list-detailed">
+              <li v-for="p in day.pauses" :key="p.id">
+                <span>{{ formatDateTime(p.startAt) }} – {{ formatDateTime(p.endAt) }}</span>
+                <span v-if="p.note" class="muted small"> · {{ p.note }}</span>
+                <button type="button" class="btn ghost danger-text btn-xs" @click="removePause(p.id)">✕</button>
+              </li>
+            </ul>
+            <p v-else class="muted small">Brez pavz.</p>
+          </div>
+        </div>
+      </section>
     </div>
 
-    <div class="pager pager-compact">
-      <div class="row pager-nav">
-        <button type="button" class="btn ghost" :disabled="page <= 1" @click="goto(page - 1)">Prejšnja</button>
-        <span class="pager-pos">{{ page }} / {{ totalPages }}</span>
-        <button type="button" class="btn ghost" :disabled="page >= totalPages" @click="goto(page + 1)">Naslednja</button>
-      </div>
-      <label class="pager-size">
-        <span class="muted small">Na stran</span>
-        <select v-model.number="pageSize">
-          <option :value="10">10</option>
-          <option :value="25">25</option>
-          <option :value="50">50</option>
-        </select>
-      </label>
-    </div>
+    <DayPauseModal v-if="pauseDayKey" :day-key="pauseDayKey" @close="pauseDayKey = null" @saved="pauseDayKey = null; load()" />
   </div>
-
-  <EntryForm
-    v-if="showForm"
-    :entry="editing"
-    :users="users"
-    :can-pick-user="auth.has('entries.edit_all')"
-    @close="showForm = false"
-    @saved="onSaved"
-  />
 </template>

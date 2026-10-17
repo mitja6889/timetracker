@@ -15,11 +15,13 @@ import (
 )
 
 type Server struct {
-	db        *mongo.Database
-	users     *mongo.Collection
-	roles     *mongo.Collection
-	entries   *mongo.Collection
-	jwtSecret []byte
+	db         *mongo.Database
+	users      *mongo.Collection
+	roles      *mongo.Collection
+	entries    *mongo.Collection
+	timeEvents *mongo.Collection
+	dayPauses  *mongo.Collection
+	jwtSecret  []byte
 }
 
 func env(key, def string) string {
@@ -51,11 +53,13 @@ func main() {
 
 	db := client.Database(env("MONGO_DB", "timetracker"))
 	s := &Server{
-		db:        db,
-		users:     db.Collection("users"),
-		roles:     db.Collection("roles"),
-		entries:   db.Collection("entries"),
-		jwtSecret: []byte(secret),
+		db:         db,
+		users:      db.Collection("users"),
+		roles:      db.Collection("roles"),
+		entries:    db.Collection("entries"),
+		timeEvents: db.Collection("time_events"),
+		dayPauses:  db.Collection("day_pauses"),
+		jwtSecret:  []byte(secret),
 	}
 
 	if err := s.ensureIndexes(ctx); err != nil {
@@ -88,17 +92,21 @@ func (s *Server) ensureIndexes(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	_, err := s.entries.Indexes().CreateMany(ctx, []mongo.IndexModel{
+	if _, err := s.entries.Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{Keys: bson.D{{Key: "userId", Value: 1}, {Key: "startedAt", Value: -1}}},
-		{Keys: bson.D{{Key: "userId", Value: 1}, {Key: "status", Value: 1}}},
-		{
-			Keys: bson.D{{Key: "userId", Value: 1}},
-			Options: options.Index().
-				SetUnique(true).
-				SetName("one_open_entry_per_user").
-				SetPartialFilterExpression(bson.M{"open": true}),
-		},
 		{Keys: bson.D{{Key: "startedAt", Value: -1}}},
+	}); err != nil {
+		return err
+	}
+	_, err := s.timeEvents.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "userId", Value: 1}, {Key: "at", Value: -1}}},
+		{Keys: bson.D{{Key: "userId", Value: 1}, {Key: "at", Value: 1}}},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.dayPauses.Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{Keys: bson.D{{Key: "userId", Value: 1}, {Key: "dayKey", Value: 1}}},
 	})
 	return err
 }
@@ -130,9 +138,11 @@ func (s *Server) routes() http.Handler {
 	// štoparica
 	mux.HandleFunc("GET /api/timer/current", s.requirePerm(PermTimerUse, s.handleTimerCurrent))
 	mux.HandleFunc("POST /api/timer/start", s.requirePerm(PermTimerUse, s.handleTimerStart))
-	mux.HandleFunc("POST /api/timer/pause", s.requirePerm(PermTimerUse, s.handleTimerPause))
-	mux.HandleFunc("POST /api/timer/resume", s.requirePerm(PermTimerUse, s.handleTimerResume))
 	mux.HandleFunc("POST /api/timer/stop", s.requirePerm(PermTimerUse, s.handleTimerStop))
+
+	mux.HandleFunc("GET /api/time/days", s.requireAuth(s.handleTimeDays))
+	mux.HandleFunc("POST /api/time/days/{dayKey}/pauses", s.requireAuth(s.handleCreateDayPause))
+	mux.HandleFunc("DELETE /api/time/pauses/{id}", s.requireAuth(s.handleDeleteDayPause))
 
 	// vnosi
 	mux.HandleFunc("GET /api/entries", s.requireAuth(s.handleListEntries))

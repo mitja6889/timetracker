@@ -48,9 +48,9 @@ Filtriranje po uporabniku se vsili na strežniku: brez `entries.view_all` je
 - `GET|POST /api/roles`, `PUT|DELETE /api/roles/{id}`, `GET /api/permissions`
 - `GET /api/timer/current`, `POST /api/timer/{start|pause|resume|stop}`
 
-Beleženje časa shranjuje **dogodke** `start` / `stop` s časovnim žigom v polje `events`
-posameznega vnosa. Delovni čas je vsota intervalov med zaporednima dogodkoma start→stop
-(tekoči vnos šteje od zadnjega start do trenutka). Pavza = dogodek `stop`, nadaljevanje = `start`.
+Štoparica shranjuje v zbirko `time_events` dogodke **`start`** in **`stop`** (timestamp).
+Delovni čas na dan = seštevek intervalov start→stop (vključno s tekočo sejo) **minus**
+ročno dodane **pavze** (`day_pauses`) za ta dan. Pavza ni dogodek v časovnici.
 - `GET /api/entries?page&pageSize&sort&order&q&status&userId&from&to`
 - `POST /api/entries`, `PUT|DELETE /api/entries/{id}`
 

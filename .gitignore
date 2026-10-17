@@ -1,0 +1,6 @@
+node_modules/
+dist/
+backend/server
+backend/go.sum
+*.log
+.env

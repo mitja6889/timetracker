@@ -15,6 +15,35 @@ export function formatDateTime(iso: string | null): string {
   return new Date(iso).toLocaleString('sl-SI', { dateStyle: 'short', timeStyle: 'short' })
 }
 
+export function formatTime(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString('sl-SI', { hour: '2-digit', minute: '2-digit' })
+}
+
+/** Lokalni YYYY-MM-DD iz ISO datuma (za grupiranje vnosov). */
+export function localDayKey(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+const dayKeyToDate = (key: string) => new Date(`${key}T12:00:00`)
+
+/** Naslov skupine vnosov za dan (Danes, Včeraj, …). */
+export function formatDayGroupLabel(dayKey: string, todayKey = localDayKey(new Date().toISOString())): string {
+  if (dayKey === todayKey) return 'Danes'
+  const today = dayKeyToDate(todayKey)
+  const y = new Date(today)
+  y.setDate(y.getDate() - 1)
+  const yesterdayKey = localDayKey(y.toISOString())
+  if (dayKey === yesterdayKey) return 'Včeraj'
+  return dayKeyToDate(dayKey).toLocaleDateString('sl-SI', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: dayKey.slice(0, 4) !== todayKey.slice(0, 4) ? 'numeric' : undefined,
+  })
+}
+
 /** ISO (UTC) -> vrednost za <input type="datetime-local"> v lokalnem času */
 export function toLocalInput(iso: string | null): string {
   if (!iso) return ''

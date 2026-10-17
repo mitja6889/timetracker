@@ -3,7 +3,15 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, type Entry, type EntriesPage, type UserRow } from '../api'
 import EntryForm from '../components/EntryForm.vue'
 import { useAuth } from '../stores/auth'
-import { dayStartISO, formatDateTime, formatDuration, nextDayStartISO } from '../utils'
+import {
+  dayStartISO,
+  formatDateTime,
+  formatDayGroupLabel,
+  formatDuration,
+  formatTime,
+  localDayKey,
+  nextDayStartISO,
+} from '../utils'
 
 const auth = useAuth()
 
@@ -36,10 +44,12 @@ const error = ref('')
 
 const editing = ref<Entry | null>(null)
 const showForm = ref(false)
+const expanded = ref<Set<string>>(new Set())
 
 const totalPages = computed(() => Math.max(1, Math.ceil((data.value?.total ?? 0) / pageSize.value)))
 const rangeWorkSeconds = computed(() => data.value?.rangeWorkSeconds ?? 0)
 const hasRange = computed(() => Boolean(range.from || range.to))
+const todayKey = computed(() => todayLocal())
 
 const activeFilterCount = computed(() => {
   let n = 0
@@ -49,12 +59,59 @@ const activeFilterCount = computed(() => {
   return n
 })
 
+interface DayGroup {
+  key: string
+  label: string
+  totalSeconds: number
+  entries: Entry[]
+}
+
+const groupedEntries = computed((): DayGroup[] => {
+  const items = data.value?.items ?? []
+  const byDay = new Map<string, Entry[]>()
+  for (const e of items) {
+    const key = localDayKey(e.startedAt)
+    const list = byDay.get(key)
+    if (list) list.push(e)
+    else byDay.set(key, [e])
+  }
+
+  const keys = [...byDay.keys()].sort((a, b) => {
+    if (sort.value === 'startedAt') {
+      return order.value === 'asc' ? a.localeCompare(b) : b.localeCompare(a)
+    }
+    return b.localeCompare(a)
+  })
+
+  return keys.map((key) => {
+    const entries = byDay.get(key) ?? []
+    return {
+      key,
+      label: formatDayGroupLabel(key, todayKey.value),
+      totalSeconds: entries.reduce((s, e) => s + e.workSeconds, 0),
+      entries,
+    }
+  })
+})
+
+function isExpanded(id: string) {
+  return expanded.value.has(id)
+}
+
+function toggleExpanded(id: string) {
+  const next = new Set(expanded.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expanded.value = next
+}
+
 // zaščita pred zaostalimi odgovori pri hitrem spreminjanju filtrov
 let seq = 0
 async function load() {
   const mine = ++seq
   loading.value = true
   error.value = ''
+  expanded.value = new Set()
   try {
     const res = await api.entries({
       page: page.value,
@@ -95,16 +152,12 @@ watch(
 )
 watch([() => filters.status, () => filters.userId, pageSize], resetAndLoad)
 watch([() => range.from, () => range.to], resetAndLoad)
+watch(sort, resetAndLoad)
 
-function sortBy(col: string) {
-  if (sort.value === col) order.value = order.value === 'asc' ? 'desc' : 'asc'
-  else {
-    sort.value = col
-    order.value = col === 'description' ? 'asc' : 'desc'
-  }
+function toggleOrder() {
+  order.value = order.value === 'asc' ? 'desc' : 'asc'
   resetAndLoad()
 }
-const arrow = (col: string) => (sort.value === col ? (order.value === 'asc' ? ' ▲' : ' ▼') : '')
 
 function clearFilters() {
   filters.q = ''
@@ -146,6 +199,13 @@ async function remove(e: Entry) {
 
 const statusLabel: Record<string, string> = { running: 'Teče', paused: 'Pavza', stopped: 'Zaključen' }
 
+const sortOptions = [
+  { value: 'startedAt', label: 'Datum začetka' },
+  { value: 'endedAt', label: 'Datum konca' },
+  { value: 'description', label: 'Opis' },
+  { value: 'status', label: 'Status' },
+]
+
 onMounted(async () => {
   if (canViewAll.value || auth.has('entries.edit_all')) {
     try {
@@ -161,19 +221,45 @@ onMounted(async () => {
 <template>
   <div class="card entries-page">
     <div class="row between wrap page-head">
-      <h2>Vnosi časa <small v-if="!canViewAll" class="muted">(samo moji)</small></h2>
-      <button v-if="canCreate" class="btn primary" @click="openCreate">+ Nov vnos</button>
+      <h2>Vnosi <small v-if="!canViewAll" class="muted">(moji)</small></h2>
+      <button v-if="canCreate" type="button" class="btn primary" @click="openCreate">+ Nov</button>
     </div>
 
-    <div class="entries-toolbar">
+    <section class="range-bar range-bar-compact" aria-label="Obdobje in vsota časa">
+      <div class="range-bar-fields">
+        <label class="range-field">
+          <span>Od</span>
+          <input v-model="range.from" type="date" />
+        </label>
+        <label class="range-field">
+          <span>Do</span>
+          <input v-model="range.to" type="date" />
+        </label>
+      </div>
+      <div class="range-summary">
+        <strong class="range-total">{{ hasRange ? formatDuration(rangeWorkSeconds) : '—' }}</strong>
+        <span v-if="hasRange" class="muted small">{{ data?.total ?? 0 }} vnosov v obdobju</span>
+      </div>
+    </section>
+
+    <div class="entries-toolbar row wrap">
       <button
         type="button"
         class="btn ghost filters-toggle"
         :aria-expanded="showFilters"
         @click="toggleFilters"
       >
-        {{ showFilters ? 'Skrij filtre' : 'Prikaži filtre' }}
+        Filtri
         <span v-if="activeFilterCount" class="filter-badge">{{ activeFilterCount }}</span>
+      </button>
+      <label class="sort-control">
+        <span class="muted small">Razvrsti</span>
+        <select v-model="sort">
+          <option v-for="o in sortOptions" :key="o.value" :value="o.value">{{ o.label }}</option>
+        </select>
+      </label>
+      <button type="button" class="btn ghost sort-order-btn" :aria-label="order === 'desc' ? 'Padajoče' : 'Naraščajoče'" @click="toggleOrder">
+        {{ order === 'desc' ? '↓' : '↑' }}
       </button>
     </div>
 
@@ -188,79 +274,102 @@ onMounted(async () => {
         </select>
         <select v-if="canViewAll" v-model="filters.userId">
           <option value="">Vsi uporabniki</option>
-          <option v-for="u in users" :key="u.id" :value="u.id">{{ u.name }} ({{ u.username }})</option>
+          <option v-for="u in users" :key="u.id" :value="u.id">{{ u.name }}</option>
         </select>
-        <button type="button" class="btn ghost" @click="clearFilters">Počisti filtre</button>
+        <button type="button" class="btn ghost" @click="clearFilters">Počisti</button>
       </div>
     </div>
-
-    <section class="range-bar" aria-label="Obdobje in vsota časa">
-      <div class="range-bar-fields">
-        <label class="range-field">
-          <span>Od</span>
-          <input v-model="range.from" type="date" />
-        </label>
-        <label class="range-field">
-          <span>Do</span>
-          <input v-model="range.to" type="date" />
-        </label>
-      </div>
-      <div class="range-summary">
-        <span class="muted small">Skupni delovni čas v obdobju</span>
-        <strong class="range-total">{{ hasRange ? formatDuration(rangeWorkSeconds) : '—' }}</strong>
-        <span v-if="hasRange" class="muted small">{{ data?.total ?? 0 }} vnosov</span>
-      </div>
-    </section>
 
     <p v-if="error" class="error">{{ error }}</p>
 
-    <div class="table-wrap table-scroll" :class="{ loading }">
-      <table class="table entries-table">
-        <thead>
-          <tr>
-            <th v-if="canViewAll">Uporabnik</th>
-            <th class="sortable" @click="sortBy('description')">Opis{{ arrow('description') }}</th>
-            <th class="sortable" @click="sortBy('startedAt')">Začetek{{ arrow('startedAt') }}</th>
-            <th class="sortable" @click="sortBy('endedAt')">Konec{{ arrow('endedAt') }}</th>
-            <th class="num">Pavze</th>
-            <th class="num">Delovni čas</th>
-            <th class="sortable" @click="sortBy('status')">Status{{ arrow('status') }}</th>
-            <th class="actions-col">Akcije</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="e in data?.items ?? []" :key="e.id">
-            <td v-if="canViewAll">{{ e.name }} <small class="muted">{{ e.username }}</small></td>
-            <td class="desc-col">{{ e.description || '—' }}</td>
-            <td>{{ formatDateTime(e.startedAt) }}</td>
-            <td>{{ formatDateTime(e.endedAt) }}</td>
-            <td class="num">{{ e.pauses.length }}</td>
-            <td class="num">{{ formatDuration(e.workSeconds) }}</td>
-            <td><span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span></td>
-            <td class="actions">
-              <button v-if="e.canEdit" type="button" class="btn ghost" @click="openEdit(e)">Uredi</button>
-              <button v-if="e.canDelete" type="button" class="btn ghost danger-text" @click="remove(e)">Izbriši</button>
-            </td>
-          </tr>
-          <tr v-if="data && !data.items.length">
-            <td :colspan="canViewAll ? 8 : 7" class="muted center">Ni vnosov za izbrano obdobje in filtre.</td>
-          </tr>
-        </tbody>
-      </table>
+    <div class="entries-list" :class="{ loading }">
+      <p v-if="data && !data.items.length" class="muted center entries-empty">Ni vnosov za izbrano obdobje.</p>
+
+      <section v-for="group in groupedEntries" :key="group.key" class="entry-day-group">
+        <header class="entry-day-head">
+          <h3 class="entry-day-label">{{ group.label }}</h3>
+          <span class="entry-day-stats muted small">
+            {{ group.entries.length }} · {{ formatDuration(group.totalSeconds) }}
+          </span>
+        </header>
+
+        <div class="entry-rows">
+          <article
+            v-for="e in group.entries"
+            :key="e.id"
+            class="entry-row"
+            :class="{ expanded: isExpanded(e.id) }"
+          >
+            <button
+              type="button"
+              class="entry-row-summary"
+              :aria-expanded="isExpanded(e.id)"
+              @click="toggleExpanded(e.id)"
+            >
+              <span class="entry-chevron" aria-hidden="true">›</span>
+              <span class="entry-row-body">
+                <span class="entry-row-title">{{ e.description || 'Brez opisa' }}</span>
+                <span class="entry-row-meta">
+                  <span>{{ formatTime(e.startedAt) }}–{{ formatTime(e.endedAt) }}</span>
+                  <span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span>
+                </span>
+                <span v-if="canViewAll" class="entry-row-user muted small">{{ e.name }}</span>
+              </span>
+              <span class="entry-row-duration">{{ formatDuration(e.workSeconds) }}</span>
+            </button>
+
+            <div v-show="isExpanded(e.id)" class="entry-row-detail">
+              <dl class="detail-grid">
+                <template v-if="canViewAll">
+                  <dt>Uporabnik</dt>
+                  <dd>{{ e.name }} <span class="muted">({{ e.username }})</span></dd>
+                </template>
+                <dt>Opis</dt>
+                <dd>{{ e.description || '—' }}</dd>
+                <dt>Začetek</dt>
+                <dd>{{ formatDateTime(e.startedAt) }}</dd>
+                <dt>Konec</dt>
+                <dd>{{ formatDateTime(e.endedAt) }}</dd>
+                <dt>Delovni čas</dt>
+                <dd>{{ formatDuration(e.workSeconds) }}</dd>
+                <dt>Status</dt>
+                <dd><span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span></dd>
+                <dt>Pavze</dt>
+                <dd>
+                  <ul v-if="e.pauses.length" class="pause-list">
+                    <li v-for="(p, i) in e.pauses" :key="i">
+                      {{ formatDateTime(p.start) }} – {{ p.end ? formatDateTime(p.end) : '…' }}
+                    </li>
+                  </ul>
+                  <span v-else class="muted">Brez pavz</span>
+                </dd>
+              </dl>
+              <div v-if="e.canEdit || e.canDelete" class="entry-row-actions">
+                <button v-if="e.canEdit" type="button" class="btn ghost" @click.stop="openEdit(e)">Uredi</button>
+                <button v-if="e.canDelete" type="button" class="btn ghost danger-text" @click.stop="remove(e)">
+                  Izbriši
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
     </div>
 
-    <div class="pager">
-      <span class="muted pager-summary">Stran {{ page }} / {{ totalPages }}</span>
-      <div class="row">
-        <select v-model.number="pageSize">
-          <option :value="10">10 / stran</option>
-          <option :value="25">25 / stran</option>
-          <option :value="50">50 / stran</option>
-        </select>
-        <button type="button" class="btn ghost" :disabled="page <= 1" @click="goto(page - 1)">‹</button>
-        <span>{{ page }} / {{ totalPages }}</span>
-        <button type="button" class="btn ghost" :disabled="page >= totalPages" @click="goto(page + 1)">›</button>
+    <div class="pager pager-compact">
+      <div class="row pager-nav">
+        <button type="button" class="btn ghost" :disabled="page <= 1" @click="goto(page - 1)">Prejšnja</button>
+        <span class="pager-pos">{{ page }} / {{ totalPages }}</span>
+        <button type="button" class="btn ghost" :disabled="page >= totalPages" @click="goto(page + 1)">Naslednja</button>
       </div>
+      <label class="pager-size">
+        <span class="muted small">Na stran</span>
+        <select v-model.number="pageSize">
+          <option :value="10">10</option>
+          <option :value="25">25</option>
+          <option :value="50">50</option>
+        </select>
+      </label>
     </div>
   </div>
 

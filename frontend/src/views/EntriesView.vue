@@ -136,7 +136,7 @@ onMounted(async () => {
 
 <template>
   <div class="card">
-    <div class="row between wrap">
+    <div class="row between wrap page-head">
       <h2>Vnosi časa <small v-if="!canViewAll" class="muted">(samo moji)</small></h2>
       <button v-if="canCreate" class="btn primary" @click="openCreate">+ Nov vnos</button>
     </div>
@@ -161,7 +161,7 @@ onMounted(async () => {
     <p v-if="error" class="error">{{ error }}</p>
 
     <div class="table-wrap" :class="{ loading }">
-      <table class="table">
+      <table class="table table-stack">
         <thead>
           <tr>
             <th v-if="canViewAll">Uporabnik</th>
@@ -171,32 +171,32 @@ onMounted(async () => {
             <th class="num">Pavze</th>
             <th class="num">Delovni čas</th>
             <th class="sortable" @click="sortBy('status')">Status{{ arrow('status') }}</th>
-            <th></th>
+            <th>Akcije</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="e in data?.items ?? []" :key="e.id">
-            <td v-if="canViewAll">{{ e.name }} <small class="muted">{{ e.username }}</small></td>
-            <td>{{ e.description || '—' }}</td>
-            <td>{{ formatDateTime(e.startedAt) }}</td>
-            <td>{{ formatDateTime(e.endedAt) }}</td>
-            <td class="num">{{ e.pauses.length }}</td>
-            <td class="num">{{ formatDuration(e.workSeconds) }}</td>
-            <td><span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span></td>
-            <td class="actions">
+            <td v-if="canViewAll" data-label="Uporabnik">{{ e.name }} <small class="muted">{{ e.username }}</small></td>
+            <td data-label="Opis">{{ e.description || '—' }}</td>
+            <td data-label="Začetek">{{ formatDateTime(e.startedAt) }}</td>
+            <td data-label="Konec">{{ formatDateTime(e.endedAt) }}</td>
+            <td class="num" data-label="Pavze">{{ e.pauses.length }}</td>
+            <td class="num" data-label="Delovni čas">{{ formatDuration(e.workSeconds) }}</td>
+            <td data-label="Status"><span class="badge" :class="e.status">{{ statusLabel[e.status] }}</span></td>
+            <td class="actions" data-label="Akcije">
               <button v-if="e.canEdit" class="btn ghost" @click="openEdit(e)">Uredi</button>
               <button v-if="e.canDelete" class="btn ghost danger-text" @click="remove(e)">Izbriši</button>
             </td>
           </tr>
           <tr v-if="data && !data.items.length">
-            <td :colspan="canViewAll ? 8 : 7" class="muted center">Ni vnosov za izbrane filtre.</td>
+            <td :colspan="canViewAll ? 8 : 7" class="muted center table-empty">Ni vnosov za izbrane filtre.</td>
           </tr>
         </tbody>
       </table>
     </div>
 
     <div class="pager">
-      <span class="muted">
+      <span class="muted pager-summary">
         Skupaj {{ data?.total ?? 0 }} vnosov · delovni čas na strani: {{ formatDuration(pageWork) }}
       </span>
       <div class="row">

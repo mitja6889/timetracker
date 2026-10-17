@@ -108,23 +108,25 @@ onUnmounted(() => window.clearInterval(timer))
   </div>
 
   <div class="card">
-    <div class="row between">
+    <div class="row between wrap page-head">
       <h3>Zadnji vnosi</h3>
       <RouterLink to="/entries">Vsi vnosi →</RouterLink>
     </div>
-    <table v-if="recent.length" class="table">
-      <thead>
-        <tr><th>Opis</th><th>Začetek</th><th>Konec</th><th class="num">Trajanje</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="e in recent" :key="e.id">
-          <td>{{ e.description || '—' }}</td>
-          <td>{{ formatDateTime(e.startedAt) }}</td>
-          <td>{{ formatDateTime(e.endedAt) }}</td>
-          <td class="num">{{ formatDuration(e.workSeconds) }}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-if="recent.length" class="table-wrap">
+      <table class="table table-stack">
+        <thead>
+          <tr><th>Opis</th><th>Začetek</th><th>Konec</th><th class="num">Trajanje</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="e in recent" :key="e.id">
+            <td data-label="Opis">{{ e.description || '—' }}</td>
+            <td data-label="Začetek">{{ formatDateTime(e.startedAt) }}</td>
+            <td data-label="Konec">{{ formatDateTime(e.endedAt) }}</td>
+            <td class="num" data-label="Trajanje">{{ formatDuration(e.workSeconds) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <p v-else class="muted">Še ni zaključenih vnosov.</p>
   </div>
 </template>

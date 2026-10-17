@@ -92,29 +92,31 @@ onMounted(load)
 
 <template>
   <div class="card">
-    <div class="row between">
+    <div class="row between page-head">
       <h2>Uporabniki</h2>
       <button class="btn primary" @click="openCreate">+ Nov uporabnik</button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
-    <table class="table">
-      <thead>
-        <tr><th>Uporabniško ime</th><th>Ime</th><th>Role</th><th>Status</th><th>Ustvarjen</th><th></th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="u in users" :key="u.id">
-          <td>{{ u.username }}</td>
-          <td>{{ u.name }}</td>
-          <td>{{ u.roleName }}</td>
-          <td><span class="badge" :class="u.active ? 'stopped' : 'paused'">{{ u.active ? 'Aktiven' : 'Onemogočen' }}</span></td>
-          <td>{{ formatDateTime(u.createdAt ?? null) }}</td>
-          <td class="actions">
-            <button class="btn ghost" @click="openEdit(u)">Uredi</button>
-            <button class="btn ghost danger-text" :disabled="u.id === auth.me?.id" @click="remove(u)">Izbriši</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table class="table table-stack">
+        <thead>
+          <tr><th>Uporabniško ime</th><th>Ime</th><th>Role</th><th>Status</th><th>Ustvarjen</th><th>Akcije</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="u in users" :key="u.id">
+            <td data-label="Uporabniško ime">{{ u.username }}</td>
+            <td data-label="Ime">{{ u.name }}</td>
+            <td data-label="Role">{{ u.roleName }}</td>
+            <td data-label="Status"><span class="badge" :class="u.active ? 'stopped' : 'paused'">{{ u.active ? 'Aktiven' : 'Onemogočen' }}</span></td>
+            <td data-label="Ustvarjen">{{ formatDateTime(u.createdAt ?? null) }}</td>
+            <td class="actions" data-label="Akcije">
+              <button class="btn ghost" @click="openEdit(u)">Uredi</button>
+              <button class="btn ghost danger-text" :disabled="u.id === auth.me?.id" @click="remove(u)">Izbriši</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <AppModal v-if="showForm" :title="editingId ? 'Uredi uporabnika' : 'Nov uporabnik'" @close="showForm = false">

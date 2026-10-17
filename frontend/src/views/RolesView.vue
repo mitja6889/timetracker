@@ -77,31 +77,33 @@ onMounted(load)
 
 <template>
   <div class="card">
-    <div class="row between">
+    <div class="row between page-head">
       <h2>Role in pravice</h2>
       <button class="btn primary" @click="openCreate">+ Nova role</button>
     </div>
     <p v-if="error" class="error">{{ error }}</p>
-    <table class="table">
-      <thead>
-        <tr><th>Ime</th><th>Opis</th><th>Pravice</th><th class="num">Uporabniki</th><th></th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="r in roles" :key="r.id">
-          <td>{{ r.name }} <span v-if="r.system" class="badge running">sistemska</span></td>
-          <td>{{ r.description || '—' }}</td>
-          <td>
-            <span v-for="p in r.permissions" :key="p" class="chip">{{ permLabel(p) }}</span>
-            <span v-if="!r.permissions.length" class="muted">brez pravic</span>
-          </td>
-          <td class="num">{{ r.userCount }}</td>
-          <td class="actions">
-            <button class="btn ghost" @click="openEdit(r)">Uredi</button>
-            <button class="btn ghost danger-text" :disabled="r.system" @click="remove(r)">Izbriši</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table class="table table-stack">
+        <thead>
+          <tr><th>Ime</th><th>Opis</th><th>Pravice</th><th class="num">Uporabniki</th><th>Akcije</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in roles" :key="r.id">
+            <td data-label="Ime">{{ r.name }} <span v-if="r.system" class="badge running">sistemska</span></td>
+            <td data-label="Opis">{{ r.description || '—' }}</td>
+            <td data-label="Pravice">
+              <span v-for="p in r.permissions" :key="p" class="chip">{{ permLabel(p) }}</span>
+              <span v-if="!r.permissions.length" class="muted">brez pravic</span>
+            </td>
+            <td class="num" data-label="Uporabniki">{{ r.userCount }}</td>
+            <td class="actions" data-label="Akcije">
+              <button class="btn ghost" @click="openEdit(r)">Uredi</button>
+              <button class="btn ghost danger-text" :disabled="r.system" @click="remove(r)">Izbriši</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <AppModal v-if="showForm" :title="editing ? 'Uredi rolo' : 'Nova role'" @close="showForm = false">

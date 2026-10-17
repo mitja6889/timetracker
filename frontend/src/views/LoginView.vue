@@ -40,7 +40,7 @@ async function submit() {
         <input v-model="password" type="password" autocomplete="current-password" required />
       </label>
       <p v-if="error" class="error">{{ error }}</p>
-      <button class="btn primary" :disabled="busy">{{ busy ? 'Prijavljam…' : 'Prijava' }}</button>
+      <button class="btn primary block" :disabled="busy">{{ busy ? 'Prijavljam…' : 'Prijava' }}</button>
     </form>
   </div>
 </template>
